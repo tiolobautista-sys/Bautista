@@ -74,29 +74,20 @@ export default function App() {
   }, [session, isAdmin]);
 
   const ensureProfile = async (user) => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("profiles")
       .select("*")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
     if (!data) {
-      const { error: insertError } = await supabase.from("profiles").insert([
+      await supabase.from("profiles").insert([
         {
           id: user.id,
           email: user.email,
           role: "user",
         },
       ]);
-
-      if (insertError) {
-        setMessage(insertError.message);
-      }
     }
   };
 
@@ -107,12 +98,9 @@ export default function App() {
       .eq("id", userId)
       .single();
 
-    if (error) {
-      setMessage(error.message);
-      return;
+    if (!error) {
+      setProfile(data);
     }
-
-    setProfile(data);
   };
 
   const handleRegister = async (e) => {
@@ -257,8 +245,8 @@ export default function App() {
     }
 
     setMessage("Time-in recorded successfully.");
-    await loadMyAttendance(session.user.id);
-    if (isAdmin) await loadAllAttendance();
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
   };
 
   const handleTimeOut = async () => {
@@ -298,8 +286,8 @@ export default function App() {
     }
 
     setMessage("Time-out recorded successfully.");
-    await loadMyAttendance(session.user.id);
-    if (isAdmin) await loadAllAttendance();
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
   };
 
   const createUserByAdmin = async (e) => {
@@ -330,7 +318,7 @@ export default function App() {
     setNewUserEmail("");
     setNewUserPassword("");
     setNewUserRole("user");
-    await loadUsers();
+    loadUsers();
   };
 
   const deleteUserByAdmin = async (userId) => {
@@ -353,8 +341,8 @@ export default function App() {
     }
 
     setMessage("User deleted successfully.");
-    await loadUsers();
-    await loadAllAttendance();
+    loadUsers();
+    loadAllAttendance();
   };
 
   const formatDateTime = (value) => {
@@ -367,15 +355,15 @@ export default function App() {
     const keyword = userFilter.toLowerCase();
 
     const matchUser = userFilter
-      ? (record.user_id || "").toLowerCase().includes(keyword) ||
-        (record.profiles?.email || "").toLowerCase().includes(keyword)
+      ? record.user_id?.toLowerCase().includes(keyword) ||
+        record.profiles?.email?.toLowerCase().includes(keyword)
       : true;
 
     return matchDate && matchUser;
   });
 
   const filteredUsers = users.filter((user) =>
-    (user.email || "").toLowerCase().includes(userSearch.toLowerCase())
+    user.email.toLowerCase().includes(userSearch.toLowerCase())
   );
 
   if (loading) {
@@ -387,18 +375,16 @@ export default function App() {
       <div className="auth-page">
         <div className="card auth-card">
           <h1>Attendance Tracking System</h1>
-          <p className="subtitle">Register or log in to record your attendance</p>
+          <p className="subtitle">Register or log in</p>
 
           <div className="auth-switch">
             <button
-              type="button"
               className={authMode === "login" ? "active" : ""}
               onClick={() => setAuthMode("login")}
             >
               Login
             </button>
             <button
-              type="button"
               className={authMode === "register" ? "active" : ""}
               onClick={() => setAuthMode("register")}
             >
@@ -426,7 +412,7 @@ export default function App() {
             </button>
           </form>
 
-          {message && <div className="notice">{message}</div>}
+          {message && <p className="message">{message}</p>}
         </div>
       </div>
     );
@@ -551,15 +537,13 @@ export default function App() {
                         <td>{user.role}</td>
                         <td>{formatDateTime(user.created_at)}</td>
                         <td>
-                          {user.id !== session.user.id ? (
+                          {user.id !== session.user.id && (
                             <button
                               className="delete-btn"
                               onClick={() => deleteUserByAdmin(user.id)}
                             >
                               Delete
                             </button>
-                          ) : (
-                            "-"
                           )}
                         </td>
                       </tr>
@@ -590,7 +574,6 @@ export default function App() {
                 onChange={(e) => setUserFilter(e.target.value)}
               />
               <button
-                type="button"
                 className="secondary-btn"
                 onClick={() => {
                   setDateFilter("");
