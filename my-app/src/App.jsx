@@ -14,7 +14,10 @@ function formatDateTime(value) {
 
 function getToday() {
   const now = new Date();
-  return now.toISOString().split("T")[0];
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export default function App() {
@@ -35,11 +38,10 @@ export default function App() {
   const [userFilter, setUserFilter] = useState("");
   const [dateFilter, setDateFilter] = useState("");
 
-  // ================= SESSION =================
   useEffect(() => {
     const getSession = async () => {
       const { data } = await supabase.auth.getSession();
-      setSession(data.session);
+      setSession(data.session || null);
       setLoading(false);
     };
 
@@ -47,18 +49,21 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession || null);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // ================= LOAD DATA =================
   useEffect(() => {
     if (session?.user) {
       loadProfile(session.user.id);
       loadHistory(session.user.id);
+    } else {
+      setProfile(null);
+      setHistory([]);
+      setAdminRecords([]);
     }
   }, [session]);
 
@@ -68,31 +73,38 @@ export default function App() {
     }
   }, [profile]);
 
-  // ================= LOAD PROFILE =================
   async function loadProfile(userId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("*")
       .eq("id", userId)
       .single();
 
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
     setProfile(data);
   }
 
-  // ================= USER HISTORY =================
   async function loadHistory(userId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", userId)
       .order("date", { ascending: false });
 
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
     setHistory(data || []);
   }
 
-  // ================= ADMIN RECORDS =================
   async function loadAdminRecords() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("attendance")
       .select(`
         id,
@@ -102,10 +114,20 @@ export default function App() {
         time_out,
         profiles:user_id (full_name, email)
       `)
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
     const formatted = (data || []).map((r) => ({
-      ...r,
+      id: r.id,
+      user_id: r.user_id,
+      date: r.date,
+      time_in: r.time_in,
+      time_out: r.time_out,
       full_name: r.profiles?.full_name || "No name",
       email: r.profiles?.email || "No email",
     }));
@@ -113,12 +135,14 @@ export default function App() {
     setAdminRecords(formatted);
   }
 
-  // ================= FILTER =================
   const filteredRecords = useMemo(() => {
     return adminRecords.filter((r) => {
-      const matchUser = userFilter
-        ? r.full_name.toLowerCase().includes(userFilter.toLowerCase()) ||
-          r.email.toLowerCase().includes(userFilter.toLowerCase())
+      const text = userFilter.trim().toLowerCase();
+
+      const matchUser = text
+        ? (r.full_name || "").toLowerCase().includes(text) ||
+          (r.email || "").toLowerCase().includes(text) ||
+          (r.user_id || "").toLowerCase().includes(text)
         : true;
 
       const matchDate = dateFilter ? r.date === dateFilter : true;
@@ -127,54 +151,77 @@ export default function App() {
     });
   }, [adminRecords, userFilter, dateFilter]);
 
-  // ================= AUTH =================
   async function register(e) {
     e.preventDefault();
+    setMessage("");
 
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { full_name: fullName },
+        data: {
+          full_name: fullName,
+        },
       },
     });
 
-    if (error) return setMessage(error.message);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
-    setMessage("Registered! Please login.");
+    setMessage("Registered successfully. You can now log in.");
+    setFullName("");
+    setEmail("");
+    setPassword("");
     setAuthMode("login");
   }
 
   async function login(e) {
     e.preventDefault();
+    setMessage("");
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) return setMessage(error.message);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
-    setMessage("Login success!");
+    setMessage("Login successful.");
+    setEmail("");
+    setPassword("");
   }
 
   async function logout() {
     await supabase.auth.signOut();
+    setMessage("Logged out.");
   }
 
-  // ================= TIME IN =================
   async function timeIn() {
+    if (!session?.user?.id) return;
+
+    setMessage("");
     const today = getToday();
 
-    const { data: existing } = await supabase
+    const { data: existing, error: fetchError } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
       .eq("date", today)
       .maybeSingle();
 
+    if (fetchError) {
+      setMessage(fetchError.message);
+      return;
+    }
+
     if (existing?.time_in) {
-      return setMessage("Already timed in today.");
+      setMessage("Already timed in today.");
+      return;
     }
 
     const { error } = await supabase.from("attendance").insert([
@@ -182,33 +229,49 @@ export default function App() {
         user_id: session.user.id,
         date: today,
         time_in: new Date().toISOString(),
+        time_out: null,
       },
     ]);
 
-    if (error) return setMessage(error.message);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
     setMessage("Time In recorded.");
-    loadHistory(session.user.id);
-    loadAdminRecords();
+    await loadHistory(session.user.id);
+
+    if (profile?.role === "admin") {
+      await loadAdminRecords();
+    }
   }
 
-  // ================= TIME OUT =================
   async function timeOut() {
+    if (!session?.user?.id) return;
+
+    setMessage("");
     const today = getToday();
 
-    const { data: existing } = await supabase
+    const { data: existing, error: fetchError } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
       .eq("date", today)
       .maybeSingle();
 
+    if (fetchError) {
+      setMessage(fetchError.message);
+      return;
+    }
+
     if (!existing?.time_in) {
-      return setMessage("Time in first.");
+      setMessage("Time in first.");
+      return;
     }
 
     if (existing?.time_out) {
-      return setMessage("Already timed out.");
+      setMessage("Already timed out.");
+      return;
     }
 
     const { error } = await supabase
@@ -216,31 +279,46 @@ export default function App() {
       .update({ time_out: new Date().toISOString() })
       .eq("id", existing.id);
 
-    if (error) return setMessage(error.message);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
     setMessage("Time Out recorded.");
-    loadHistory(session.user.id);
-    loadAdminRecords();
+    await loadHistory(session.user.id);
+
+    if (profile?.role === "admin") {
+      await loadAdminRecords();
+    }
   }
 
-  // ================= UI =================
-  if (loading) return <h2>Loading...</h2>;
+  if (loading) {
+    return (
+      <div className="container">
+        <h2>Loading...</h2>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
       <div className="container">
         <h1>Attendance System</h1>
 
-        <button onClick={() => setAuthMode("login")}>Login</button>
-        <button onClick={() => setAuthMode("register")}>Register</button>
+        <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+          <button onClick={() => setAuthMode("login")}>Login</button>
+          <button onClick={() => setAuthMode("register")}>Register</button>
+        </div>
 
         <form onSubmit={authMode === "login" ? login : register}>
           {authMode === "register" && (
             <input
+              type="text"
               placeholder="Full Name"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               required
+              style={{ display: "block", marginBottom: "10px" }}
             />
           )}
 
@@ -250,6 +328,7 @@ export default function App() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            style={{ display: "block", marginBottom: "10px" }}
           />
 
           <input
@@ -258,6 +337,7 @@ export default function App() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            style={{ display: "block", marginBottom: "10px" }}
           />
 
           <button type="submit">
@@ -265,7 +345,7 @@ export default function App() {
           </button>
         </form>
 
-        <p>{message}</p>
+        {message && <p>{message}</p>}
       </div>
     );
   }
@@ -273,14 +353,18 @@ export default function App() {
   return (
     <div className="container">
       <h2>Welcome {profile?.full_name || session.user.email}</h2>
-      <p>Role: {profile?.role}</p>
+      <p>Role: {profile?.role || "user"}</p>
 
       <button onClick={logout}>Logout</button>
 
       <hr />
 
-      <button onClick={timeIn}>Time In</button>
-      <button onClick={timeOut}>Time Out</button>
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+        <button onClick={timeIn}>Time In</button>
+        <button onClick={timeOut}>Time Out</button>
+      </div>
+
+      {message && <p>{message}</p>}
 
       <h3>My Attendance</h3>
       <table>
@@ -292,31 +376,49 @@ export default function App() {
           </tr>
         </thead>
         <tbody>
-          {history.map((h) => (
-            <tr key={h.id}>
-              <td>{formatDate(h.date)}</td>
-              <td>{formatDateTime(h.time_in)}</td>
-              <td>{formatDateTime(h.time_out)}</td>
+          {history.length > 0 ? (
+            history.map((h) => (
+              <tr key={h.id}>
+                <td>{formatDate(h.date)}</td>
+                <td>{formatDateTime(h.time_in)}</td>
+                <td>{formatDateTime(h.time_out)}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan="3">No attendance records yet.</td>
             </tr>
-          ))}
+          )}
         </tbody>
       </table>
 
       {profile?.role === "admin" && (
         <>
-          <h3>Admin Panel</h3>
+          <h3 style={{ marginTop: "30px" }}>Admin Panel</h3>
 
-          <input
-            placeholder="Search name/email"
-            value={userFilter}
-            onChange={(e) => setUserFilter(e.target.value)}
-          />
+          <div style={{ display: "flex", gap: "10px", marginBottom: "15px", flexWrap: "wrap" }}>
+            <input
+              type="text"
+              placeholder="Search name, email, or user id"
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            />
 
-          <input
-            type="date"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-          />
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+            />
+
+            <button
+              onClick={() => {
+                setUserFilter("");
+                setDateFilter("");
+              }}
+            >
+              Clear Filters
+            </button>
+          </div>
 
           <table>
             <thead>
@@ -330,16 +432,22 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.user_id}</td>
-                  <td>{r.full_name}</td>
-                  <td>{r.email}</td>
-                  <td>{formatDate(r.date)}</td>
-                  <td>{formatDateTime(r.time_in)}</td>
-                  <td>{formatDateTime(r.time_out)}</td>
+              {filteredRecords.length > 0 ? (
+                filteredRecords.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.user_id}</td>
+                    <td>{r.full_name}</td>
+                    <td>{r.email}</td>
+                    <td>{formatDate(r.date)}</td>
+                    <td>{formatDateTime(r.time_in)}</td>
+                    <td>{formatDateTime(r.time_out)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="6">No matching records found.</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </>
