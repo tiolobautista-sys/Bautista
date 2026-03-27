@@ -36,9 +36,7 @@ export default function App() {
           error: sessionError,
         } = await supabase.auth.getSession();
 
-        if (sessionError) {
-          throw new Error(sessionError.message);
-        }
+        if (sessionError) throw new Error(sessionError.message);
 
         setSession(session);
 
@@ -109,9 +107,7 @@ export default function App() {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) {
-      throw new Error("ensureProfile: " + error.message);
-    }
+    if (error) throw new Error("ensureProfile: " + error.message);
 
     if (!data) {
       const { error: insertError } = await supabase.from("profiles").insert([
@@ -122,9 +118,7 @@ export default function App() {
         },
       ]);
 
-      if (insertError) {
-        throw new Error("insert profile: " + insertError.message);
-      }
+      if (insertError) throw new Error("insert profile: " + insertError.message);
     }
   };
 
@@ -135,9 +129,7 @@ export default function App() {
       .eq("id", userId)
       .single();
 
-    if (error) {
-      throw new Error("loadProfile: " + error.message);
-    }
+    if (error) throw new Error("loadProfile: " + error.message);
 
     setProfile(data);
   };
@@ -196,9 +188,7 @@ export default function App() {
       .eq("user_id", userId)
       .order("date", { ascending: false });
 
-    if (error) {
-      throw new Error("loadMyAttendance: " + error.message);
-    }
+    if (error) throw new Error("loadMyAttendance: " + error.message);
 
     setHistory(data || []);
   };
@@ -212,15 +202,16 @@ export default function App() {
         date,
         time_in,
         time_out,
-        profiles (
-          email
+        profiles!attendance_user_id_fkey (
+          id,
+          email,
+          role
         )
       `)
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
 
-    if (error) {
-      throw new Error("loadAllAttendance: " + error.message);
-    }
+    if (error) throw new Error("loadAllAttendance: " + error.message);
 
     setAdminRecords(data || []);
   };
@@ -231,9 +222,7 @@ export default function App() {
       .select("*")
       .order("email", { ascending: true });
 
-    if (error) {
-      throw new Error("loadUsers: " + error.message);
-    }
+    if (error) throw new Error("loadUsers: " + error.message);
 
     setUsers(data || []);
   };
@@ -400,9 +389,14 @@ export default function App() {
     const matchDate = dateFilter ? record.date === dateFilter : true;
     const keyword = userFilter.toLowerCase();
 
+    const emailText =
+      record.profiles?.email ||
+      record.profiles?.[0]?.email ||
+      "";
+
     const matchUser = userFilter
       ? (record.user_id || "").toLowerCase().includes(keyword) ||
-        (record.profiles?.email || "").toLowerCase().includes(keyword)
+        emailText.toLowerCase().includes(keyword)
       : true;
 
     return matchDate && matchUser;
@@ -607,7 +601,7 @@ export default function App() {
           </section>
 
           <section className="card admin-card">
-            <h2>Administrator Monitoring Interface</h2>
+            <h2>All Users Attendance Records</h2>
 
             <div className="filters">
               <input
@@ -646,15 +640,22 @@ export default function App() {
                 </thead>
                 <tbody>
                   {filteredAdminRecords.length > 0 ? (
-                    filteredAdminRecords.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.profiles?.email || "-"}</td>
-                        <td>{item.user_id}</td>
-                        <td>{item.date}</td>
-                        <td>{formatDateTime(item.time_in)}</td>
-                        <td>{formatDateTime(item.time_out)}</td>
-                      </tr>
-                    ))
+                    filteredAdminRecords.map((item) => {
+                      const emailText =
+                        item.profiles?.email ||
+                        item.profiles?.[0]?.email ||
+                        "-";
+
+                      return (
+                        <tr key={item.id}>
+                          <td>{emailText}</td>
+                          <td>{item.user_id}</td>
+                          <td>{item.date}</td>
+                          <td>{formatDateTime(item.time_in)}</td>
+                          <td>{formatDateTime(item.time_out)}</td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan="5">No matching records found.</td>
