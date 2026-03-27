@@ -194,7 +194,7 @@ export default function App() {
   };
 
   const loadAllAttendance = async () => {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("attendance")
       .select(`
         id,
@@ -202,14 +202,32 @@ export default function App() {
         date,
         time_in,
         time_out,
-        profiles!attendance_user_id_fkey (
-          id,
-          email,
-          role
+        profiles:profiles!attendance_user_id_fkey (
+          email
         )
       `)
       .order("date", { ascending: false })
       .order("time_in", { ascending: false });
+
+    if (error) {
+      const retry = await supabase
+        .from("attendance")
+        .select(`
+          id,
+          user_id,
+          date,
+          time_in,
+          time_out,
+          profiles (
+            email
+          )
+        `)
+        .order("date", { ascending: false })
+        .order("time_in", { ascending: false });
+
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw new Error("loadAllAttendance: " + error.message);
 
@@ -385,14 +403,17 @@ export default function App() {
     return new Date(value).toLocaleString();
   };
 
+  const getAdminEmail = (record) => {
+    if (Array.isArray(record.profiles)) {
+      return record.profiles[0]?.email || "-";
+    }
+    return record.profiles?.email || "-";
+  };
+
   const filteredAdminRecords = adminRecords.filter((record) => {
     const matchDate = dateFilter ? record.date === dateFilter : true;
     const keyword = userFilter.toLowerCase();
-
-    const emailText =
-      record.profiles?.email ||
-      record.profiles?.[0]?.email ||
-      "";
+    const emailText = getAdminEmail(record);
 
     const matchUser = userFilter
       ? (record.user_id || "").toLowerCase().includes(keyword) ||
@@ -640,22 +661,15 @@ export default function App() {
                 </thead>
                 <tbody>
                   {filteredAdminRecords.length > 0 ? (
-                    filteredAdminRecords.map((item) => {
-                      const emailText =
-                        item.profiles?.email ||
-                        item.profiles?.[0]?.email ||
-                        "-";
-
-                      return (
-                        <tr key={item.id}>
-                          <td>{emailText}</td>
-                          <td>{item.user_id}</td>
-                          <td>{item.date}</td>
-                          <td>{formatDateTime(item.time_in)}</td>
-                          <td>{formatDateTime(item.time_out)}</td>
-                        </tr>
-                      );
-                    })
+                    filteredAdminRecords.map((item) => (
+                      <tr key={item.id}>
+                        <td>{getAdminEmail(item)}</td>
+                        <td>{item.user_id}</td>
+                        <td>{item.date}</td>
+                        <td>{formatDateTime(item.time_in)}</td>
+                        <td>{formatDateTime(item.time_out)}</td>
+                      </tr>
+                    ))
                   ) : (
                     <tr>
                       <td colSpan="5">No matching records found.</td>
