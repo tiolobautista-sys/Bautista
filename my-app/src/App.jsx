@@ -2,168 +2,179 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase.client";
 import "./App.css";
 
-const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
+function formatDate(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString();
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function getToday() {
+  const now = new Date();
+  return now.toISOString().split("T")[0];
+}
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
 
+  const [authMode, setAuthMode] = useState("login");
   const [message, setMessage] = useState("");
+
   const [history, setHistory] = useState([]);
   const [adminRecords, setAdminRecords] = useState([]);
 
-  const [dateFilter, setDateFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
 
-  const isAdmin = useMemo(() => {
-    return session?.user?.email === ADMIN_EMAIL;
-  }, [session]);
-
+  // ================= SESSION =================
   useEffect(() => {
-    const getSessionData = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      setSession(session);
+    const getSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
       setLoading(false);
-
-      if (session) {
-        loadMyAttendance(session.user.id);
-      }
     };
 
-    getSessionData();
+    getSession();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setMessage("");
-
-      if (session) {
-        loadMyAttendance(session.user.id);
-      } else {
-        setHistory([]);
-        setAdminRecords([]);
-      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  // ================= LOAD DATA =================
   useEffect(() => {
-    if (session?.user?.id) {
-      loadMyAttendance(session.user.id);
-      if (isAdmin) {
-        loadAllAttendance();
-      }
+    if (session?.user) {
+      loadProfile(session.user.id);
+      loadHistory(session.user.id);
     }
-  }, [session, isAdmin]);
+  }, [session]);
 
-  const handleRegister = async (e) => {
+  useEffect(() => {
+    if (profile?.role === "admin") {
+      loadAdminRecords();
+    }
+  }, [profile]);
+
+  // ================= LOAD PROFILE =================
+  async function loadProfile(userId) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .single();
+
+    setProfile(data);
+  }
+
+  // ================= USER HISTORY =================
+  async function loadHistory(userId) {
+    const { data } = await supabase
+      .from("attendance")
+      .select("*")
+      .eq("user_id", userId)
+      .order("date", { ascending: false });
+
+    setHistory(data || []);
+  }
+
+  // ================= ADMIN RECORDS =================
+  async function loadAdminRecords() {
+    const { data } = await supabase
+      .from("attendance")
+      .select(`
+        id,
+        user_id,
+        date,
+        time_in,
+        time_out,
+        profiles:user_id (full_name, email)
+      `)
+      .order("date", { ascending: false });
+
+    const formatted = (data || []).map((r) => ({
+      ...r,
+      full_name: r.profiles?.full_name || "No name",
+      email: r.profiles?.email || "No email",
+    }));
+
+    setAdminRecords(formatted);
+  }
+
+  // ================= FILTER =================
+  const filteredRecords = useMemo(() => {
+    return adminRecords.filter((r) => {
+      const matchUser = userFilter
+        ? r.full_name.toLowerCase().includes(userFilter.toLowerCase()) ||
+          r.email.toLowerCase().includes(userFilter.toLowerCase())
+        : true;
+
+      const matchDate = dateFilter ? r.date === dateFilter : true;
+
+      return matchUser && matchDate;
+    });
+  }, [adminRecords, userFilter, dateFilter]);
+
+  // ================= AUTH =================
+  async function register(e) {
     e.preventDefault();
-    setMessage("");
 
     const { error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: { full_name: fullName },
+      },
     });
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
+    if (error) return setMessage(error.message);
 
-    setMessage("Registration successful. Check your email if confirmation is enabled.");
-    setEmail("");
-    setPassword("");
-  };
+    setMessage("Registered! Please login.");
+    setAuthMode("login");
+  }
 
-  const handleLogin = async (e) => {
+  async function login(e) {
     e.preventDefault();
-    setMessage("");
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
+    if (error) return setMessage(error.message);
 
-    setEmail("");
-    setPassword("");
-    setMessage("Login successful.");
-  };
+    setMessage("Login success!");
+  }
 
-  const handleLogout = async () => {
+  async function logout() {
     await supabase.auth.signOut();
-    setMessage("Logged out.");
-  };
+  }
 
-  const loadMyAttendance = async (userId) => {
-    const { data, error } = await supabase
-      .from("attendance")
-      .select("*")
-      .eq("user_id", userId)
-      .order("date", { ascending: false });
+  // ================= TIME IN =================
+  async function timeIn() {
+    const today = getToday();
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setHistory(data || []);
-  };
-
-  const loadAllAttendance = async () => {
-    const { data, error } = await supabase
-      .from("attendance")
-      .select("*")
-      .order("date", { ascending: false })
-      .order("time_in", { ascending: false });
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setAdminRecords(data || []);
-  };
-
-  const getTodayDate = () => {
-    const now = new Date();
-    const offset = now.getTimezoneOffset();
-    const local = new Date(now.getTime() - offset * 60000);
-    return local.toISOString().split("T")[0];
-  };
-
-  const handleTimeIn = async () => {
-    setMessage("");
-    const today = getTodayDate();
-
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
       .eq("date", today)
       .maybeSingle();
 
-    if (checkError) {
-      setMessage(checkError.message);
-      return;
-    }
-
     if (existing?.time_in) {
-      setMessage("You already timed in today.");
-      return;
+      return setMessage("Already timed in today.");
     }
 
     const { error } = await supabase.from("attendance").insert([
@@ -171,247 +182,167 @@ export default function App() {
         user_id: session.user.id,
         date: today,
         time_in: new Date().toISOString(),
-        time_out: null,
       },
     ]);
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
+    if (error) return setMessage(error.message);
 
-    setMessage("Time-in recorded successfully.");
-    loadMyAttendance(session.user.id);
-    if (isAdmin) loadAllAttendance();
-  };
+    setMessage("Time In recorded.");
+    loadHistory(session.user.id);
+    loadAdminRecords();
+  }
 
-  const handleTimeOut = async () => {
-    setMessage("");
-    const today = getTodayDate();
+  // ================= TIME OUT =================
+  async function timeOut() {
+    const today = getToday();
 
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
       .eq("date", today)
       .maybeSingle();
 
-    if (checkError) {
-      setMessage(checkError.message);
-      return;
-    }
-
     if (!existing?.time_in) {
-      setMessage("You need to time in first.");
-      return;
+      return setMessage("Time in first.");
     }
 
     if (existing?.time_out) {
-      setMessage("You already timed out today.");
-      return;
+      return setMessage("Already timed out.");
     }
 
     const { error } = await supabase
       .from("attendance")
-      .update({
-        time_out: new Date().toISOString(),
-      })
+      .update({ time_out: new Date().toISOString() })
       .eq("id", existing.id);
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
+    if (error) return setMessage(error.message);
 
-    setMessage("Time-out recorded successfully.");
-    loadMyAttendance(session.user.id);
-    if (isAdmin) loadAllAttendance();
-  };
-
-  const filteredAdminRecords = adminRecords.filter((record) => {
-    const matchDate = dateFilter ? record.date === dateFilter : true;
-    const matchUser = userFilter
-      ? record.user_id.toLowerCase().includes(userFilter.toLowerCase())
-      : true;
-
-    return matchDate && matchUser;
-  });
-
-  const formatDateTime = (value) => {
-    if (!value) return "-";
-    return new Date(value).toLocaleString();
-  };
-
-  if (loading) {
-    return <div className="center-box">Loading...</div>;
+    setMessage("Time Out recorded.");
+    loadHistory(session.user.id);
+    loadAdminRecords();
   }
+
+  // ================= UI =================
+  if (loading) return <h2>Loading...</h2>;
 
   if (!session) {
     return (
-      <div className="auth-page">
-        <div className="card auth-card">
-          <h1>Attendance Tracking System</h1>
-          <p className="subtitle">
-            Register or log in to record your attendance
-          </p>
+      <div className="container">
+        <h1>Attendance System</h1>
 
-          <div className="auth-switch">
-            <button
-              className={authMode === "login" ? "active" : ""}
-              onClick={() => setAuthMode("login")}
-            >
-              Login
-            </button>
-            <button
-              className={authMode === "register" ? "active" : ""}
-              onClick={() => setAuthMode("register")}
-            >
-              Register
-            </button>
-          </div>
+        <button onClick={() => setAuthMode("login")}>Login</button>
+        <button onClick={() => setAuthMode("register")}>Register</button>
 
-          <form onSubmit={authMode === "login" ? handleLogin : handleRegister}>
+        <form onSubmit={authMode === "login" ? login : register}>
+          {authMode === "register" && (
             <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Full Name"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
               required
             />
+          )}
 
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
 
-            <button type="submit" className="primary-btn">
-              {authMode === "login" ? "Login" : "Register"}
-            </button>
-          </form>
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
 
-          {message && <p className="message">{message}</p>}
-        </div>
+          <button type="submit">
+            {authMode === "login" ? "Login" : "Register"}
+          </button>
+        </form>
+
+        <p>{message}</p>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <header className="topbar">
-        <div>
-          <h1>Attendance Tracking System</h1>
-          <p className="subtitle">Logged in as: {session.user.email}</p>
-        </div>
-        <button className="logout-btn" onClick={handleLogout}>
-          Logout
-        </button>
-      </header>
+    <div className="container">
+      <h2>Welcome {profile?.full_name || session.user.email}</h2>
+      <p>Role: {profile?.role}</p>
 
-      {message && <div className="notice">{message}</div>}
+      <button onClick={logout}>Logout</button>
 
-      <section className="grid">
-        <div className="card">
-          <h2>User Panel</h2>
-          <div className="button-row">
-            <button className="primary-btn" onClick={handleTimeIn}>
-              Time In
-            </button>
-            <button className="secondary-btn" onClick={handleTimeOut}>
-              Time Out
-            </button>
-          </div>
-        </div>
+      <hr />
 
-        <div className="card">
-          <h2>My Attendance History</h2>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Time In</th>
-                  <th>Time Out</th>
+      <button onClick={timeIn}>Time In</button>
+      <button onClick={timeOut}>Time Out</button>
+
+      <h3>My Attendance</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Time In</th>
+            <th>Time Out</th>
+          </tr>
+        </thead>
+        <tbody>
+          {history.map((h) => (
+            <tr key={h.id}>
+              <td>{formatDate(h.date)}</td>
+              <td>{formatDateTime(h.time_in)}</td>
+              <td>{formatDateTime(h.time_out)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {profile?.role === "admin" && (
+        <>
+          <h3>Admin Panel</h3>
+
+          <input
+            placeholder="Search name/email"
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+          />
+
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+          />
+
+          <table>
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Date</th>
+                <th>Time In</th>
+                <th>Time Out</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRecords.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.user_id}</td>
+                  <td>{r.full_name}</td>
+                  <td>{r.email}</td>
+                  <td>{formatDate(r.date)}</td>
+                  <td>{formatDateTime(r.time_in)}</td>
+                  <td>{formatDateTime(r.time_out)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {history.length > 0 ? (
-                  history.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.date}</td>
-                      <td>{formatDateTime(item.time_in)}</td>
-                      <td>{formatDateTime(item.time_out)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="3">No attendance records yet.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      {isAdmin && (
-        <section className="card admin-card">
-          <h2>Administrator Monitoring Interface</h2>
-
-          <div className="filters">
-            <input
-              type="date"
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-            />
-            <input
-              type="text"
-              placeholder="Filter by user_id"
-              value={userFilter}
-              onChange={(e) => setUserFilter(e.target.value)}
-            />
-            <button
-              className="secondary-btn"
-              onClick={() => {
-                setDateFilter("");
-                setUserFilter("");
-              }}
-            >
-              Clear Filters
-            </button>
-          </div>
-
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>User ID</th>
-                  <th>Date</th>
-                  <th>Time In</th>
-                  <th>Time Out</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAdminRecords.length > 0 ? (
-                  filteredAdminRecords.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.user_id}</td>
-                      <td>{item.date}</td>
-                      <td>{formatDateTime(item.time_in)}</td>
-                      <td>{formatDateTime(item.time_out)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="4">No matching records found.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
