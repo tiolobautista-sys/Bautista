@@ -27,41 +27,22 @@ export default function App() {
   const isAdmin = useMemo(() => profile?.role === "admin", [profile]);
 
   useEffect(() => {
-    const init = async () => {
+    let mounted = true;
+
+    const initialize = async () => {
       try {
         setLoading(true);
+        setMessage("");
 
         const {
           data: { session },
-          error: sessionError,
+          error,
         } = await supabase.auth.getSession();
 
-        if (sessionError) throw new Error(sessionError.message);
+        if (error) throw error;
+        if (!mounted) return;
 
         setSession(session);
-
-        if (session?.user) {
-          await ensureProfile(session.user);
-          await loadProfile(session.user.id);
-          await loadMyAttendance(session.user.id);
-        }
-      } catch (err) {
-        console.error("INIT ERROR:", err);
-        setMessage(err.message || "Something went wrong while loading.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    init();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      try {
-        setLoading(true);
-        setSession(session);
-        setMessage("");
 
         if (session?.user) {
           await ensureProfile(session.user);
@@ -74,14 +55,58 @@ export default function App() {
           setUsers([]);
         }
       } catch (err) {
-        console.error("AUTH STATE ERROR:", err);
+        console.error("INIT ERROR:", err);
+        if (mounted) {
+          setMessage(err.message || "Failed to initialize app.");
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initialize();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+
+      try {
+        if (
+          event === "SIGNED_IN" ||
+          event === "TOKEN_REFRESHED" ||
+          event === "INITIAL_SESSION" ||
+          event === "USER_UPDATED"
+        ) {
+          setSession(session);
+
+          if (session?.user) {
+            await ensureProfile(session.user);
+            await loadProfile(session.user.id);
+            await loadMyAttendance(session.user.id);
+          }
+        }
+
+        if (event === "SIGNED_OUT") {
+          setSession(null);
+          setProfile(null);
+          setHistory([]);
+          setAdminRecords([]);
+          setUsers([]);
+          setMessage("Logged out.");
+        }
+      } catch (err) {
+        console.error("AUTH CHANGE ERROR:", err);
         setMessage(err.message || "Authentication state error.");
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -98,7 +123,7 @@ export default function App() {
     };
 
     loadAdminData();
-  }, [session, isAdmin]);
+  }, [session?.user?.id, isAdmin]);
 
   const ensureProfile = async (user) => {
     const { data, error } = await supabase
@@ -118,7 +143,9 @@ export default function App() {
         },
       ]);
 
-      if (insertError) throw new Error("insert profile: " + insertError.message);
+      if (insertError) {
+        throw new Error("insert profile: " + insertError.message);
+      }
     }
   };
 
@@ -177,8 +204,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    setMessage("");
     await supabase.auth.signOut();
-    setMessage("Logged out.");
   };
 
   const loadMyAttendance = async (userId) => {
@@ -186,7 +213,8 @@ export default function App() {
       .from("attendance")
       .select("*")
       .eq("user_id", userId)
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
 
     if (error) throw new Error("loadMyAttendance: " + error.message);
 
@@ -194,7 +222,7 @@ export default function App() {
   };
 
   const loadAllAttendance = async () => {
-    let { data, error } = await supabase
+    let query = await supabase
       .from("attendance")
       .select(`
         id,
@@ -208,6 +236,9 @@ export default function App() {
       `)
       .order("date", { ascending: false })
       .order("time_in", { ascending: false });
+
+    let data = query.data;
+    let error = query.error;
 
     if (error) {
       const retry = await supabase
