@@ -93,7 +93,8 @@ export default function App() {
       .from("attendance")
       .select("*")
       .eq("user_id", userId)
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
 
     if (error) {
       setMessage(error.message);
@@ -104,32 +105,38 @@ export default function App() {
   }
 
   async function loadAdminRecords() {
-    const { data, error } = await supabase
+    const { data: attendanceData, error: attendanceError } = await supabase
       .from("attendance")
-      .select(`
-        id,
-        user_id,
-        date,
-        time_in,
-        time_out,
-        profiles:user_id (full_name, email)
-      `)
+      .select("id, user_id, date, time_in, time_out")
       .order("date", { ascending: false })
       .order("time_in", { ascending: false });
 
-    if (error) {
-      setMessage(error.message);
+    if (attendanceError) {
+      setMessage(attendanceError.message);
       return;
     }
 
-    const formatted = (data || []).map((r) => ({
-      id: r.id,
-      user_id: r.user_id,
-      date: r.date,
-      time_in: r.time_in,
-      time_out: r.time_out,
-      full_name: r.profiles?.full_name || "No name",
-      email: r.profiles?.email || "No email",
+    const { data: profilesData, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, email");
+
+    if (profilesError) {
+      setMessage(profilesError.message);
+      return;
+    }
+
+    const emailMap = {};
+    (profilesData || []).forEach((p) => {
+      emailMap[p.id] = p.email || "No email";
+    });
+
+    const formatted = (attendanceData || []).map((row) => ({
+      id: row.id,
+      user_id: row.user_id,
+      email: emailMap[row.user_id] || "No email",
+      date: row.date,
+      time_in: row.time_in,
+      time_out: row.time_out,
     }));
 
     setAdminRecords(formatted);
@@ -140,9 +147,8 @@ export default function App() {
       const text = userFilter.trim().toLowerCase();
 
       const matchUser = text
-        ? (r.full_name || "").toLowerCase().includes(text) ||
-          (r.email || "").toLowerCase().includes(text) ||
-          (r.user_id || "").toLowerCase().includes(text)
+        ? (r.user_id || "").toLowerCase().includes(text) ||
+          (r.email || "").toLowerCase().includes(text)
         : true;
 
       const matchDate = dateFilter ? r.date === dateFilter : true;
@@ -396,10 +402,17 @@ export default function App() {
         <>
           <h3 style={{ marginTop: "30px" }}>Admin Panel</h3>
 
-          <div style={{ display: "flex", gap: "10px", marginBottom: "15px", flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              marginBottom: "15px",
+              flexWrap: "wrap",
+            }}
+          >
             <input
               type="text"
-              placeholder="Search name, email, or user id"
+              placeholder="Search user id or email"
               value={userFilter}
               onChange={(e) => setUserFilter(e.target.value)}
             />
@@ -424,7 +437,6 @@ export default function App() {
             <thead>
               <tr>
                 <th>User ID</th>
-                <th>Name</th>
                 <th>Email</th>
                 <th>Date</th>
                 <th>Time In</th>
@@ -436,7 +448,6 @@ export default function App() {
                 filteredRecords.map((r) => (
                   <tr key={r.id}>
                     <td>{r.user_id}</td>
-                    <td>{r.full_name}</td>
                     <td>{r.email}</td>
                     <td>{formatDate(r.date)}</td>
                     <td>{formatDateTime(r.time_in)}</td>
@@ -445,7 +456,7 @@ export default function App() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6">No matching records found.</td>
+                  <td colSpan="5">No matching records found.</td>
                 </tr>
               )}
             </tbody>
