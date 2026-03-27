@@ -168,16 +168,7 @@ export default function App() {
   const loadAllAttendance = async () => {
     const { data, error } = await supabase
       .from("attendance")
-      .select(`
-        id,
-        user_id,
-        date,
-        time_in,
-        time_out,
-        profiles (
-          email
-        )
-      `)
+      .select("*")
       .order("date", { ascending: false });
 
     if (error) {
@@ -352,11 +343,8 @@ export default function App() {
 
   const filteredAdminRecords = adminRecords.filter((record) => {
     const matchDate = dateFilter ? record.date === dateFilter : true;
-    const keyword = userFilter.toLowerCase();
-
     const matchUser = userFilter
-      ? record.user_id?.toLowerCase().includes(keyword) ||
-        record.profiles?.email?.toLowerCase().includes(keyword)
+      ? record.user_id.toLowerCase().includes(userFilter.toLowerCase())
       : true;
 
     return matchDate && matchUser;
@@ -569,7 +557,7 @@ export default function App() {
               />
               <input
                 type="text"
-                placeholder="Filter by email or user ID"
+                placeholder="Filter by user_id"
                 value={userFilter}
                 onChange={(e) => setUserFilter(e.target.value)}
               />
@@ -588,7 +576,6 @@ export default function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Email</th>
                     <th>User ID</th>
                     <th>Date</th>
                     <th>Time In</th>
@@ -599,7 +586,6 @@ export default function App() {
                   {filteredAdminRecords.length > 0 ? (
                     filteredAdminRecords.map((item) => (
                       <tr key={item.id}>
-                        <td>{item.profiles?.email || "-"}</td>
                         <td>{item.user_id}</td>
                         <td>{item.date}</td>
                         <td>{formatDateTime(item.time_in)}</td>
@@ -608,7 +594,7 @@ export default function App() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="5">No matching records found.</td>
+                      <td colSpan="4">No matching records found.</td>
                     </tr>
                   )}
                 </tbody>
