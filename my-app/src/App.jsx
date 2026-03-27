@@ -1,123 +1,418 @@
-import { useState, useEffect } from "react"
-import { supabase } from "./supabase.client"
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "./supabaseclient";
+import "./App.css";
+
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
 
 export default function App() {
-  // STATE: stores all tasks from database
-  const [tasks, setTasks] = useState([])
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // STATE: stores user input
-  const [input, setInput] = useState("")
+  const [authMode, setAuthMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-  // Runs once when page loads
+  const [message, setMessage] = useState("");
+  const [history, setHistory] = useState([]);
+  const [adminRecords, setAdminRecords] = useState([]);
+
+  const [dateFilter, setDateFilter] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+
+  const isAdmin = useMemo(() => {
+    return session?.user?.email === ADMIN_EMAIL;
+  }, [session]);
+
   useEffect(() => {
-    fetchTasks()
-  }, [])
+    const getSessionData = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-  // READ: Fetch tasks from Supabase
-  const fetchTasks = async () => {
+      setSession(session);
+      setLoading(false);
+
+      if (session) {
+        loadMyAttendance(session.user.id);
+      }
+    };
+
+    getSessionData();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setMessage("");
+
+      if (session) {
+        loadMyAttendance(session.user.id);
+      } else {
+        setHistory([]);
+        setAdminRecords([]);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      loadMyAttendance(session.user.id);
+      if (isAdmin) {
+        loadAllAttendance();
+      }
+    }
+  }, [session, isAdmin]);
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setMessage("");
+
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Registration successful. Check your email if confirmation is enabled.");
+    setEmail("");
+    setPassword("");
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setMessage("");
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setEmail("");
+    setPassword("");
+    setMessage("Login successful.");
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setMessage("Logged out.");
+  };
+
+  const loadMyAttendance = async (userId) => {
     const { data, error } = await supabase
-      .from("tasks")
+      .from("attendance")
       .select("*")
+      .eq("user_id", userId)
+      .order("date", { ascending: false });
 
     if (error) {
-      console.log("Error fetching:", error)
-    } else {
-      setTasks(data)
+      setMessage(error.message);
+      return;
     }
-  }
 
-  // CREATE: Add new task
-  const addTask = async () => {
-    if (!input.trim()) return
+    setHistory(data || []);
+  };
+
+  const loadAllAttendance = async () => {
+    const { data, error } = await supabase
+      .from("attendance")
+      .select("*")
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setAdminRecords(data || []);
+  };
+
+  const getTodayDate = () => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    const local = new Date(now.getTime() - offset * 60000);
+    return local.toISOString().split("T")[0];
+  };
+
+  const handleTimeIn = async () => {
+    setMessage("");
+    const today = getTodayDate();
+
+    const { data: existing, error: checkError } = await supabase
+      .from("attendance")
+      .select("*")
+      .eq("user_id", session.user.id)
+      .eq("date", today)
+      .maybeSingle();
+
+    if (checkError) {
+      setMessage(checkError.message);
+      return;
+    }
+
+    if (existing?.time_in) {
+      setMessage("You already timed in today.");
+      return;
+    }
+
+    const { error } = await supabase.from("attendance").insert([
+      {
+        user_id: session.user.id,
+        date: today,
+        time_in: new Date().toISOString(),
+        time_out: null,
+      },
+    ]);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Time-in recorded successfully.");
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
+  };
+
+  const handleTimeOut = async () => {
+    setMessage("");
+    const today = getTodayDate();
+
+    const { data: existing, error: checkError } = await supabase
+      .from("attendance")
+      .select("*")
+      .eq("user_id", session.user.id)
+      .eq("date", today)
+      .maybeSingle();
+
+    if (checkError) {
+      setMessage(checkError.message);
+      return;
+    }
+
+    if (!existing?.time_in) {
+      setMessage("You need to time in first.");
+      return;
+    }
+
+    if (existing?.time_out) {
+      setMessage("You already timed out today.");
+      return;
+    }
 
     const { error } = await supabase
-      .from("tasks")
-      .insert([
-        { name: input, is_done: false }
-      ])
+      .from("attendance")
+      .update({
+        time_out: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
 
     if (error) {
-      console.log("Insert error:", error)
-    } else {
-      setInput("")
-      fetchTasks()
+      setMessage(error.message);
+      return;
     }
+
+    setMessage("Time-out recorded successfully.");
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
+  };
+
+  const filteredAdminRecords = adminRecords.filter((record) => {
+    const matchDate = dateFilter ? record.date === dateFilter : true;
+    const matchUser = userFilter
+      ? record.user_id.toLowerCase().includes(userFilter.toLowerCase())
+      : true;
+
+    return matchDate && matchUser;
+  });
+
+  const formatDateTime = (value) => {
+    if (!value) return "-";
+    return new Date(value).toLocaleString();
+  };
+
+  if (loading) {
+    return <div className="center-box">Loading...</div>;
   }
 
-  // UPDATE: Mark task as done
-  const markDone = async (id, currentStatus) => {
-    const { error } = await supabase
-      .from("tasks")
-      .update({ is_done: !currentStatus })
-      .eq("id", id)
+  if (!session) {
+    return (
+      <div className="auth-page">
+        <div className="card auth-card">
+          <h1>Attendance Tracking System</h1>
+          <p className="subtitle">
+            Register or log in to record your attendance
+          </p>
 
-    if (error) {
-      console.log("Update error:", error)
-    } else {
-      fetchTasks()
-    }
-  }
+          <div className="auth-switch">
+            <button
+              className={authMode === "login" ? "active" : ""}
+              onClick={() => setAuthMode("login")}
+            >
+              Login
+            </button>
+            <button
+              className={authMode === "register" ? "active" : ""}
+              onClick={() => setAuthMode("register")}
+            >
+              Register
+            </button>
+          </div>
 
-  // DELETE: Remove task
-  const deleteTask = async (id) => {
-    const { error } = await supabase
-      .from("tasks")
-      .delete()
-      .eq("id", id)
+          <form onSubmit={authMode === "login" ? handleLogin : handleRegister}>
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
 
-    if (error) {
-      console.log("Delete error:", error)
-    } else {
-      fetchTasks()
-    }
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+
+            <button type="submit" className="primary-btn">
+              {authMode === "login" ? "Login" : "Register"}
+            </button>
+          </form>
+
+          {message && <p className="message">{message}</p>}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div style={{ padding: "20px", fontFamily: "Arial" }}>
-      <h1>TODO LIST</h1>
+    <div className="page">
+      <header className="topbar">
+        <div>
+          <h1>Attendance Tracking System</h1>
+          <p className="subtitle">Logged in as: {session.user.email}</p>
+        </div>
+        <button className="logout-btn" onClick={handleLogout}>
+          Logout
+        </button>
+      </header>
 
-      {/* INPUT FIELD */}
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        style={{ padding: "5px", marginRight: "10px" }}
-        placeholder="Enter a task..."
-      />
+      {message && <div className="notice">{message}</div>}
 
-      {/* ADD BUTTON */}
-      <button onClick={addTask}>
-        Add Task
-      </button>
-
-      <ul>
-        {tasks.map((task) => (
-          <li
-            key={task.id}
-            style={{
-              marginTop: "10px",
-              textDecoration: task.is_done ? "line-through" : "none"
-            }}
-          >
-            {task.name}
-
-            {/* MARK DONE BUTTON */}
-            <button
-              onClick={() => markDone(task.id, task.is_done)}
-              style={{ marginLeft: "10px" }}
-            >
-              {task.is_done ? "Undo" : "Done"}
+      <section className="grid">
+        <div className="card">
+          <h2>User Panel</h2>
+          <div className="button-row">
+            <button className="primary-btn" onClick={handleTimeIn}>
+              Time In
             </button>
-
-            {/* DELETE BUTTON */}
-            <button
-              onClick={() => deleteTask(task.id)}
-              style={{ marginLeft: "10px" }}
-            >
-              Delete
+            <button className="secondary-btn" onClick={handleTimeOut}>
+              Time Out
             </button>
-          </li>
-        ))}
-      </ul>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>My Attendance History</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Time In</th>
+                  <th>Time Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.length > 0 ? (
+                  history.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.date}</td>
+                      <td>{formatDateTime(item.time_in)}</td>
+                      <td>{formatDateTime(item.time_out)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="3">No attendance records yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {isAdmin && (
+        <section className="card admin-card">
+          <h2>Administrator Monitoring Interface</h2>
+
+          <div className="filters">
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Filter by user_id"
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            />
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                setDateFilter("");
+                setUserFilter("");
+              }}
+            >
+              Clear Filters
+            </button>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Date</th>
+                  <th>Time In</th>
+                  <th>Time Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAdminRecords.length > 0 ? (
+                  filteredAdminRecords.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.user_id}</td>
+                      <td>{item.date}</td>
+                      <td>{formatDateTime(item.time_in)}</td>
+                      <td>{formatDateTime(item.time_out)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="4">No matching records found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
-  )
+  );
 }
