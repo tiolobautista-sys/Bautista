@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabase.client";
+import { supabase } from "./supabaseclient";
 import "./App.css";
+
+const ADMIN_EMAIL = "admin@gmail.com";
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -24,148 +26,124 @@ export default function App() {
   const [newUserRole, setNewUserRole] = useState("user");
   const [userSearch, setUserSearch] = useState("");
 
-  const isAdmin = useMemo(() => profile?.role === "admin", [profile]);
+  const isAdmin = useMemo(() => {
+    return profile?.role === "admin" || session?.user?.email === ADMIN_EMAIL;
+  }, [profile, session]);
 
   useEffect(() => {
-    let mounted = true;
-
-    const initialize = async () => {
+    const init = async () => {
       try {
-        setLoading(true);
-        setMessage("");
-
         const {
           data: { session },
-          error,
         } = await supabase.auth.getSession();
 
-        if (error) throw error;
-        if (!mounted) return;
-
         setSession(session);
-
-        if (session?.user) {
-          await ensureProfile(session.user);
-          await loadProfile(session.user.id);
-          await loadMyAttendance(session.user.id);
-        } else {
-          setProfile(null);
-          setHistory([]);
-          setAdminRecords([]);
-          setUsers([]);
-        }
-      } catch (err) {
-        console.error("INIT ERROR:", err);
-        if (mounted) {
-          setMessage(err.message || "Failed to initialize app.");
-        }
+      } catch (error) {
+        console.error("Init error:", error);
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     };
 
-    initialize();
+    init();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setMessage("");
 
-      try {
-        if (
-          event === "SIGNED_IN" ||
-          event === "TOKEN_REFRESHED" ||
-          event === "INITIAL_SESSION" ||
-          event === "USER_UPDATED"
-        ) {
-          setSession(session);
-
-          if (session?.user) {
-            await ensureProfile(session.user);
-            await loadProfile(session.user.id);
-            await loadMyAttendance(session.user.id);
-          }
-        }
-
-        if (event === "SIGNED_OUT") {
-          setSession(null);
-          setProfile(null);
-          setHistory([]);
-          setAdminRecords([]);
-          setUsers([]);
-          setMessage("Logged out.");
-        }
-      } catch (err) {
-        console.error("AUTH CHANGE ERROR:", err);
-        setMessage(err.message || "Authentication state error.");
-      } finally {
-        if (mounted) setLoading(false);
+      if (!session) {
+        setProfile(null);
+        setHistory([]);
+        setAdminRecords([]);
+        setUsers([]);
       }
     });
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    const loadAdminData = async () => {
-      if (!session?.user || !isAdmin) return;
+    const loadUserData = async () => {
+      if (!session?.user) return;
 
       try {
-        await loadAllAttendance();
-        await loadUsers();
-      } catch (err) {
-        console.error("ADMIN LOAD ERROR:", err);
-        setMessage(err.message || "Failed to load admin data.");
+        await ensureProfile(session.user);
+        await loadProfile(session.user.id);
+        await loadMyAttendance(session.user.id);
+      } catch (error) {
+        console.error("loadUserData error:", error);
       }
     };
 
-    loadAdminData();
-  }, [session?.user?.id, isAdmin]);
+    loadUserData();
+  }, [session]);
+
+  useEffect(() => {
+    if (session?.user && isAdmin) {
+      loadAllAttendance();
+      loadUsers();
+    }
+  }, [session, isAdmin]);
 
   const ensureProfile = async (user) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, role")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    if (error) throw new Error("ensureProfile: " + error.message);
-
-    if (!data) {
-      const { error: insertError } = await supabase.from("profiles").insert([
-        {
-          id: user.id,
-          email: user.email,
-          role: "user",
-        },
-      ]);
-
-      if (insertError) {
-        throw new Error("insert profile: " + insertError.message);
+      if (error) {
+        console.error("ensureProfile select error:", error);
+        return;
       }
+
+      if (!data) {
+        const roleToInsert = user.email === ADMIN_EMAIL ? "admin" : "user";
+
+        const { error: insertError } = await supabase.from("profiles").insert([
+          {
+            id: user.id,
+            email: user.email,
+            role: roleToInsert,
+          },
+        ]);
+
+        if (insertError) {
+          console.error("ensureProfile insert error:", insertError);
+        }
+      }
+    } catch (err) {
+      console.error("ensureProfile unexpected error:", err);
     }
   };
 
   const loadProfile = async (userId) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, role, created_at")
+        .eq("id", userId)
+        .maybeSingle();
 
-    if (error) throw new Error("loadProfile: " + error.message);
+      if (error) {
+        console.error("loadProfile error:", error);
+        return;
+      }
 
-    setProfile(data);
+      setProfile(data);
+    } catch (err) {
+      console.error("loadProfile unexpected error:", err);
+    }
   };
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setMessage("");
 
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
     });
@@ -175,12 +153,7 @@ export default function App() {
       return;
     }
 
-    if (data.user) {
-      setMessage("Registration successful. You can now log in.");
-    } else {
-      setMessage("Registration submitted.");
-    }
-
+    setMessage("Registered successfully!");
     setEmail("");
     setPassword("");
   };
@@ -204,76 +177,66 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    setMessage("");
     await supabase.auth.signOut();
   };
 
   const loadMyAttendance = async (userId) => {
-    const { data, error } = await supabase
-      .from("attendance")
-      .select("*")
-      .eq("user_id", userId)
-      .order("date", { ascending: false })
-      .order("time_in", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("user_id", userId)
+        .order("date", { ascending: false });
 
-    if (error) throw new Error("loadMyAttendance: " + error.message);
+      if (error) {
+        console.error("loadMyAttendance error:", error);
+        setMessage(error.message);
+        return;
+      }
 
-    setHistory(data || []);
+      setHistory(data || []);
+    } catch (err) {
+      console.error("loadMyAttendance unexpected error:", err);
+    }
   };
 
   const loadAllAttendance = async () => {
-    let query = await supabase
-      .from("attendance")
-      .select(`
-        id,
-        user_id,
-        date,
-        time_in,
-        time_out,
-        profiles:profiles!attendance_user_id_fkey (
-          email
-        )
-      `)
-      .order("date", { ascending: false })
-      .order("time_in", { ascending: false });
-
-    let data = query.data;
-    let error = query.error;
-
-    if (error) {
-      const retry = await supabase
+    try {
+      const { data, error } = await supabase
         .from("attendance")
-        .select(`
-          id,
-          user_id,
-          date,
-          time_in,
-          time_out,
-          profiles (
-            email
-          )
-        `)
+        .select("*")
         .order("date", { ascending: false })
         .order("time_in", { ascending: false });
 
-      data = retry.data;
-      error = retry.error;
+      if (error) {
+        console.error("loadAllAttendance error:", error);
+        setMessage(error.message);
+        return;
+      }
+
+      setAdminRecords(data || []);
+    } catch (err) {
+      console.error("loadAllAttendance unexpected error:", err);
     }
-
-    if (error) throw new Error("loadAllAttendance: " + error.message);
-
-    setAdminRecords(data || []);
   };
 
   const loadUsers = async () => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .order("email", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-    if (error) throw new Error("loadUsers: " + error.message);
+      if (error) {
+        console.error("loadUsers error:", error);
+        setMessage(error.message);
+        return;
+      }
 
-    setUsers(data || []);
+      setUsers(data || []);
+    } catch (err) {
+      console.error("loadUsers unexpected error:", err);
+    }
   };
 
   const getTodayDate = () => {
@@ -284,94 +247,83 @@ export default function App() {
   };
 
   const handleTimeIn = async () => {
-    try {
-      setMessage("");
-      const today = getTodayDate();
+    setMessage("");
+    const today = getTodayDate();
 
-      const { data: existing, error: checkError } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .eq("date", today)
-        .maybeSingle();
+    const { data: existing, error: checkError } = await supabase
+      .from("attendance")
+      .select("*")
+      .eq("user_id", session.user.id)
+      .eq("date", today)
+      .maybeSingle();
 
-      if (checkError) {
-        setMessage(checkError.message);
-        return;
-      }
-
-      if (existing?.time_in) {
-        setMessage("You already timed in today.");
-        return;
-      }
-
-      const { error } = await supabase.from("attendance").insert([
-        {
-          user_id: session.user.id,
-          date: today,
-          time_in: new Date().toISOString(),
-          time_out: null,
-        },
-      ]);
-
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-
-      setMessage("Time-in recorded successfully.");
-      await loadMyAttendance(session.user.id);
-      if (isAdmin) await loadAllAttendance();
-    } catch (err) {
-      console.error("TIME IN ERROR:", err);
-      setMessage(err.message || "Failed to record time in.");
+    if (checkError) {
+      setMessage(checkError.message);
+      return;
     }
+
+    if (existing?.time_in) {
+      setMessage("Already timed in.");
+      return;
+    }
+
+    const { error } = await supabase.from("attendance").insert([
+      {
+        user_id: session.user.id,
+        date: today,
+        time_in: new Date().toISOString(),
+      },
+    ]);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Time-in recorded successfully.");
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
   };
 
   const handleTimeOut = async () => {
-    try {
-      setMessage("");
-      const today = getTodayDate();
+    setMessage("");
+    const today = getTodayDate();
 
-      const { data: existing, error: checkError } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .eq("date", today)
-        .maybeSingle();
+    const { data: existing, error: checkError } = await supabase
+      .from("attendance")
+      .select("*")
+      .eq("user_id", session.user.id)
+      .eq("date", today)
+      .maybeSingle();
 
-      if (checkError) {
-        setMessage(checkError.message);
-        return;
-      }
-
-      if (!existing?.time_in) {
-        setMessage("You need to time in first.");
-        return;
-      }
-
-      if (existing?.time_out) {
-        setMessage("You already timed out today.");
-        return;
-      }
-
-      const { error } = await supabase
-        .from("attendance")
-        .update({ time_out: new Date().toISOString() })
-        .eq("id", existing.id);
-
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-
-      setMessage("Time-out recorded successfully.");
-      await loadMyAttendance(session.user.id);
-      if (isAdmin) await loadAllAttendance();
-    } catch (err) {
-      console.error("TIME OUT ERROR:", err);
-      setMessage(err.message || "Failed to record time out.");
+    if (checkError) {
+      setMessage(checkError.message);
+      return;
     }
+
+    if (!existing) {
+      setMessage("No time-in record found for today.");
+      return;
+    }
+
+    if (existing?.time_out) {
+      setMessage("Already timed out.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("attendance")
+      .update({ time_out: new Date().toISOString() })
+      .eq("id", existing.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Time-out recorded successfully.");
+    loadMyAttendance(session.user.id);
+    if (isAdmin) loadAllAttendance();
   };
 
   const createUserByAdmin = async (e) => {
@@ -402,7 +354,7 @@ export default function App() {
     setNewUserEmail("");
     setNewUserPassword("");
     setNewUserRole("user");
-    await loadUsers();
+    loadUsers();
   };
 
   const deleteUserByAdmin = async (userId) => {
@@ -425,8 +377,8 @@ export default function App() {
     }
 
     setMessage("User deleted successfully.");
-    await loadUsers();
-    await loadAllAttendance();
+    loadUsers();
+    loadAllAttendance();
   };
 
   const formatDateTime = (value) => {
@@ -434,28 +386,30 @@ export default function App() {
     return new Date(value).toLocaleString();
   };
 
-  const getAdminEmail = (record) => {
-    if (Array.isArray(record.profiles)) {
-      return record.profiles[0]?.email || "-";
-    }
-    return record.profiles?.email || "-";
+  const getEmailByUserId = (userId) => {
+    const matchedUser = users.find((u) => u.id === userId);
+    return matchedUser?.email || "Unknown";
+  };
+
+  const getEmailName = (email) => {
+    if (!email) return "";
+    return email.split("@")[0];
   };
 
   const filteredAdminRecords = adminRecords.filter((record) => {
-    const matchDate = dateFilter ? record.date === dateFilter : true;
-    const keyword = userFilter.toLowerCase();
-    const emailText = getAdminEmail(record);
+    const recordEmail = getEmailByUserId(record.user_id);
+    const recordName = getEmailName(recordEmail);
 
+    const matchDate = dateFilter ? record.date === dateFilter : true;
     const matchUser = userFilter
-      ? (record.user_id || "").toLowerCase().includes(keyword) ||
-        emailText.toLowerCase().includes(keyword)
+      ? recordName.toLowerCase().includes(userFilter.toLowerCase())
       : true;
 
     return matchDate && matchUser;
   });
 
   const filteredUsers = users.filter((user) =>
-    (user.email || "").toLowerCase().includes(userSearch.toLowerCase())
+    user.email.toLowerCase().includes(userSearch.toLowerCase())
   );
 
   if (loading) {
@@ -467,18 +421,16 @@ export default function App() {
       <div className="auth-page">
         <div className="card auth-card">
           <h1>Attendance Tracking System</h1>
-          <p className="subtitle">Register or log in to record your attendance</p>
+          <p className="subtitle">Register or log in</p>
 
           <div className="auth-switch">
             <button
-              type="button"
               className={authMode === "login" ? "active" : ""}
               onClick={() => setAuthMode("login")}
             >
               Login
             </button>
             <button
-              type="button"
               className={authMode === "register" ? "active" : ""}
               onClick={() => setAuthMode("register")}
             >
@@ -506,7 +458,7 @@ export default function App() {
             </button>
           </form>
 
-          {message && <div className="notice">{message}</div>}
+          {message && <p className="message">{message}</p>}
         </div>
       </div>
     );
@@ -518,7 +470,7 @@ export default function App() {
         <div>
           <h1>Attendance Tracking System</h1>
           <p className="subtitle">
-            Logged in as: {session.user.email} ({profile?.role || "user"})
+            Logged in as: {session.user.email} ({isAdmin ? "admin" : profile?.role || "user"})
           </p>
         </div>
         <button className="logout-btn" onClick={handleLogout}>
@@ -619,6 +571,7 @@ export default function App() {
                   <tr>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Created At</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -628,23 +581,23 @@ export default function App() {
                       <tr key={user.id}>
                         <td>{user.email}</td>
                         <td>{user.role}</td>
+                        <td>{formatDateTime(user.created_at)}</td>
                         <td>
-                          {user.id !== session.user.id ? (
+                          {user.id !== session.user.id && (
                             <button
+                              type="button"
                               className="delete-btn"
                               onClick={() => deleteUserByAdmin(user.id)}
                             >
                               Delete
                             </button>
-                          ) : (
-                            "-"
                           )}
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="3">No users found.</td>
+                      <td colSpan="4">No users found.</td>
                     </tr>
                   )}
                 </tbody>
@@ -653,7 +606,7 @@ export default function App() {
           </section>
 
           <section className="card admin-card">
-            <h2>All Users Attendance Records</h2>
+            <h2>Administrator Monitoring Interface</h2>
 
             <div className="filters">
               <input
@@ -663,7 +616,7 @@ export default function App() {
               />
               <input
                 type="text"
-                placeholder="Filter by email or user ID"
+                placeholder="Filter by name (before @)"
                 value={userFilter}
                 onChange={(e) => setUserFilter(e.target.value)}
               />
@@ -683,8 +636,8 @@ export default function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Email</th>
                     <th>User ID</th>
+                    <th>Email</th>
                     <th>Date</th>
                     <th>Time In</th>
                     <th>Time Out</th>
@@ -694,8 +647,8 @@ export default function App() {
                   {filteredAdminRecords.length > 0 ? (
                     filteredAdminRecords.map((item) => (
                       <tr key={item.id}>
-                        <td>{getAdminEmail(item)}</td>
                         <td>{item.user_id}</td>
+                        <td>{getEmailByUserId(item.user_id)}</td>
                         <td>{item.date}</td>
                         <td>{formatDateTime(item.time_in)}</td>
                         <td>{formatDateTime(item.time_out)}</td>
