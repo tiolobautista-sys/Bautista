@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase.client";
 import "./App.css";
 
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState(null);
 
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -14,52 +15,41 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [history, setHistory] = useState([]);
   const [adminRecords, setAdminRecords] = useState([]);
-  const [users, setUsers] = useState([]);
 
   const [dateFilter, setDateFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
 
-  const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserRole, setNewUserRole] = useState("user");
-  const [userSearch, setUserSearch] = useState("");
-
-  const isAdmin = useMemo(() => profile?.role === "admin", [profile]);
+  const isAdmin = useMemo(() => {
+    return session?.user?.email === ADMIN_EMAIL;
+  }, [session]);
 
   useEffect(() => {
-    const init = async () => {
+    const getSessionData = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
       setSession(session);
-
-      if (session?.user) {
-        await ensureProfile(session.user);
-        await loadProfile(session.user.id);
-        await loadMyAttendance(session.user.id);
-      }
-
       setLoading(false);
+
+      if (session) {
+        loadMyAttendance(session.user.id);
+      }
     };
 
-    init();
+    getSessionData();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setMessage("");
 
-      if (session?.user) {
-        await ensureProfile(session.user);
-        await loadProfile(session.user.id);
-        await loadMyAttendance(session.user.id);
+      if (session) {
+        loadMyAttendance(session.user.id);
       } else {
-        setProfile(null);
         setHistory([]);
         setAdminRecords([]);
-        setUsers([]);
       }
     });
 
@@ -67,47 +57,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (session?.user && isAdmin) {
-      loadAllAttendance();
-      loadUsers();
+    if (session?.user?.id) {
+      loadMyAttendance(session.user.id);
+      if (isAdmin) {
+        loadAllAttendance();
+      }
     }
   }, [session, isAdmin]);
-
-  const ensureProfile = async (user) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (!data) {
-      await supabase.from("profiles").insert([
-        {
-          id: user.id,
-          email: user.email,
-          role: "user",
-        },
-      ]);
-    }
-  };
-
-  const loadProfile = async (userId) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (!error) {
-      setProfile(data);
-    }
-  };
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setMessage("");
 
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
     });
@@ -117,12 +79,7 @@ export default function App() {
       return;
     }
 
-    if (data.user) {
-      setMessage("Registration successful. You can now log in.");
-    } else {
-      setMessage("Registration submitted.");
-    }
-
+    setMessage("Registration successful. Check your email if confirmation is enabled.");
     setEmail("");
     setPassword("");
   };
@@ -143,6 +100,7 @@ export default function App() {
 
     setEmail("");
     setPassword("");
+    setMessage("Login successful.");
   };
 
   const handleLogout = async () => {
@@ -169,7 +127,8 @@ export default function App() {
     const { data, error } = await supabase
       .from("attendance")
       .select("*")
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .order("time_in", { ascending: false });
 
     if (error) {
       setMessage(error.message);
@@ -177,20 +136,6 @@ export default function App() {
     }
 
     setAdminRecords(data || []);
-  };
-
-  const loadUsers = async () => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setUsers(data || []);
   };
 
   const getTodayDate = () => {
@@ -268,7 +213,9 @@ export default function App() {
 
     const { error } = await supabase
       .from("attendance")
-      .update({ time_out: new Date().toISOString() })
+      .update({
+        time_out: new Date().toISOString(),
+      })
       .eq("id", existing.id);
 
     if (error) {
@@ -281,66 +228,6 @@ export default function App() {
     if (isAdmin) loadAllAttendance();
   };
 
-  const createUserByAdmin = async (e) => {
-    e.preventDefault();
-    setMessage("");
-
-    const response = await fetch("/api/create-user", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        adminEmail: session.user.email,
-        email: newUserEmail,
-        password: newUserPassword,
-        role: newUserRole,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      setMessage(result.error || "Failed to create user.");
-      return;
-    }
-
-    setMessage("User account created successfully.");
-    setNewUserEmail("");
-    setNewUserPassword("");
-    setNewUserRole("user");
-    loadUsers();
-  };
-
-  const deleteUserByAdmin = async (userId) => {
-    const response = await fetch("/api/delete-user", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        adminEmail: session.user.email,
-        userId,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      setMessage(result.error || "Failed to delete user.");
-      return;
-    }
-
-    setMessage("User deleted successfully.");
-    loadUsers();
-    loadAllAttendance();
-  };
-
-  const formatDateTime = (value) => {
-    if (!value) return "-";
-    return new Date(value).toLocaleString();
-  };
-
   const filteredAdminRecords = adminRecords.filter((record) => {
     const matchDate = dateFilter ? record.date === dateFilter : true;
     const matchUser = userFilter
@@ -350,9 +237,10 @@ export default function App() {
     return matchDate && matchUser;
   });
 
-  const filteredUsers = users.filter((user) =>
-    user.email.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const formatDateTime = (value) => {
+    if (!value) return "-";
+    return new Date(value).toLocaleString();
+  };
 
   if (loading) {
     return <div className="center-box">Loading...</div>;
@@ -363,7 +251,9 @@ export default function App() {
       <div className="auth-page">
         <div className="card auth-card">
           <h1>Attendance Tracking System</h1>
-          <p className="subtitle">Register or log in</p>
+          <p className="subtitle">
+            Register or log in to record your attendance
+          </p>
 
           <div className="auth-switch">
             <button
@@ -388,6 +278,7 @@ export default function App() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
+
             <input
               type="password"
               placeholder="Password"
@@ -395,6 +286,7 @@ export default function App() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+
             <button type="submit" className="primary-btn">
               {authMode === "login" ? "Login" : "Register"}
             </button>
@@ -411,9 +303,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <h1>Attendance Tracking System</h1>
-          <p className="subtitle">
-            Logged in as: {session.user.email} ({profile?.role || "user"})
-          </p>
+          <p className="subtitle">Logged in as: {session.user.email}</p>
         </div>
         <button className="logout-btn" onClick={handleLogout}>
           Logout
@@ -467,141 +357,61 @@ export default function App() {
       </section>
 
       {isAdmin && (
-        <>
-          <section className="card admin-card">
-            <h2>Admin Account Panel</h2>
+        <section className="card admin-card">
+          <h2>Administrator Monitoring Interface</h2>
 
-            <form onSubmit={createUserByAdmin} className="admin-form">
-              <input
-                type="email"
-                placeholder="New user email"
-                value={newUserEmail}
-                onChange={(e) => setNewUserEmail(e.target.value)}
-                required
-              />
-              <input
-                type="password"
-                placeholder="New user password"
-                value={newUserPassword}
-                onChange={(e) => setNewUserPassword(e.target.value)}
-                required
-              />
-              <select
-                value={newUserRole}
-                onChange={(e) => setNewUserRole(e.target.value)}
-              >
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button type="submit" className="primary-btn">
-                Create Account
-              </button>
-            </form>
+          <div className="filters">
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Filter by user_id"
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            />
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                setDateFilter("");
+                setUserFilter("");
+              }}
+            >
+              Clear Filters
+            </button>
+          </div>
 
-            <div className="filters">
-              <input
-                type="text"
-                placeholder="Search user by email"
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-              />
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Created At</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredUsers.length > 0 ? (
-                    filteredUsers.map((user) => (
-                      <tr key={user.id}>
-                        <td>{user.email}</td>
-                        <td>{user.role}</td>
-                        <td>{formatDateTime(user.created_at)}</td>
-                        <td>
-                          {user.id !== session.user.id && (
-                            <button
-                              className="delete-btn"
-                              onClick={() => deleteUserByAdmin(user.id)}
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="4">No users found.</td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Date</th>
+                  <th>Time In</th>
+                  <th>Time Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAdminRecords.length > 0 ? (
+                  filteredAdminRecords.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.user_id}</td>
+                      <td>{item.date}</td>
+                      <td>{formatDateTime(item.time_in)}</td>
+                      <td>{formatDateTime(item.time_out)}</td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="card admin-card">
-            <h2>Administrator Monitoring Interface</h2>
-
-            <div className="filters">
-              <input
-                type="date"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
-              />
-              <input
-                type="text"
-                placeholder="Filter by user_id"
-                value={userFilter}
-                onChange={(e) => setUserFilter(e.target.value)}
-              />
-              <button
-                className="secondary-btn"
-                onClick={() => {
-                  setDateFilter("");
-                  setUserFilter("");
-                }}
-              >
-                Clear Filters
-              </button>
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
+                  ))
+                ) : (
                   <tr>
-                    <th>User ID</th>
-                    <th>Date</th>
-                    <th>Time In</th>
-                    <th>Time Out</th>
+                    <td colSpan="4">No matching records found.</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredAdminRecords.length > 0 ? (
-                    filteredAdminRecords.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.user_id}</td>
-                        <td>{item.date}</td>
-                        <td>{formatDateTime(item.time_in)}</td>
-                        <td>{formatDateTime(item.time_out)}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="4">No matching records found.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   );
