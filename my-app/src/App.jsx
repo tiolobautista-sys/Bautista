@@ -74,20 +74,29 @@ export default function App() {
   }, [session, isAdmin]);
 
   const ensureProfile = async (user) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("*")
       .eq("id", user.id)
       .maybeSingle();
 
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
     if (!data) {
-      await supabase.from("profiles").insert([
+      const { error: insertError } = await supabase.from("profiles").insert([
         {
           id: user.id,
           email: user.email,
           role: "user",
         },
       ]);
+
+      if (insertError) {
+        setMessage(insertError.message);
+      }
     }
   };
 
@@ -98,9 +107,12 @@ export default function App() {
       .eq("id", userId)
       .single();
 
-    if (!error) {
-      setProfile(data);
+    if (error) {
+      setMessage(error.message);
+      return;
     }
+
+    setProfile(data);
   };
 
   const handleRegister = async (e) => {
@@ -168,7 +180,16 @@ export default function App() {
   const loadAllAttendance = async () => {
     const { data, error } = await supabase
       .from("attendance")
-      .select("*")
+      .select(`
+        id,
+        user_id,
+        date,
+        time_in,
+        time_out,
+        profiles (
+          email
+        )
+      `)
       .order("date", { ascending: false });
 
     if (error) {
@@ -236,8 +257,8 @@ export default function App() {
     }
 
     setMessage("Time-in recorded successfully.");
-    loadMyAttendance(session.user.id);
-    if (isAdmin) loadAllAttendance();
+    await loadMyAttendance(session.user.id);
+    if (isAdmin) await loadAllAttendance();
   };
 
   const handleTimeOut = async () => {
@@ -277,8 +298,8 @@ export default function App() {
     }
 
     setMessage("Time-out recorded successfully.");
-    loadMyAttendance(session.user.id);
-    if (isAdmin) loadAllAttendance();
+    await loadMyAttendance(session.user.id);
+    if (isAdmin) await loadAllAttendance();
   };
 
   const createUserByAdmin = async (e) => {
@@ -309,7 +330,7 @@ export default function App() {
     setNewUserEmail("");
     setNewUserPassword("");
     setNewUserRole("user");
-    loadUsers();
+    await loadUsers();
   };
 
   const deleteUserByAdmin = async (userId) => {
@@ -332,8 +353,8 @@ export default function App() {
     }
 
     setMessage("User deleted successfully.");
-    loadUsers();
-    loadAllAttendance();
+    await loadUsers();
+    await loadAllAttendance();
   };
 
   const formatDateTime = (value) => {
@@ -343,15 +364,18 @@ export default function App() {
 
   const filteredAdminRecords = adminRecords.filter((record) => {
     const matchDate = dateFilter ? record.date === dateFilter : true;
+    const keyword = userFilter.toLowerCase();
+
     const matchUser = userFilter
-      ? record.user_id.toLowerCase().includes(userFilter.toLowerCase())
+      ? (record.user_id || "").toLowerCase().includes(keyword) ||
+        (record.profiles?.email || "").toLowerCase().includes(keyword)
       : true;
 
     return matchDate && matchUser;
   });
 
   const filteredUsers = users.filter((user) =>
-    user.email.toLowerCase().includes(userSearch.toLowerCase())
+    (user.email || "").toLowerCase().includes(userSearch.toLowerCase())
   );
 
   if (loading) {
@@ -363,16 +387,18 @@ export default function App() {
       <div className="auth-page">
         <div className="card auth-card">
           <h1>Attendance Tracking System</h1>
-          <p className="subtitle">Register or log in</p>
+          <p className="subtitle">Register or log in to record your attendance</p>
 
           <div className="auth-switch">
             <button
+              type="button"
               className={authMode === "login" ? "active" : ""}
               onClick={() => setAuthMode("login")}
             >
               Login
             </button>
             <button
+              type="button"
               className={authMode === "register" ? "active" : ""}
               onClick={() => setAuthMode("register")}
             >
@@ -400,7 +426,7 @@ export default function App() {
             </button>
           </form>
 
-          {message && <p className="message">{message}</p>}
+          {message && <div className="notice">{message}</div>}
         </div>
       </div>
     );
@@ -525,13 +551,15 @@ export default function App() {
                         <td>{user.role}</td>
                         <td>{formatDateTime(user.created_at)}</td>
                         <td>
-                          {user.id !== session.user.id && (
+                          {user.id !== session.user.id ? (
                             <button
                               className="delete-btn"
                               onClick={() => deleteUserByAdmin(user.id)}
                             >
                               Delete
                             </button>
+                          ) : (
+                            "-"
                           )}
                         </td>
                       </tr>
@@ -557,11 +585,12 @@ export default function App() {
               />
               <input
                 type="text"
-                placeholder="Filter by user_id"
+                placeholder="Filter by email or user ID"
                 value={userFilter}
                 onChange={(e) => setUserFilter(e.target.value)}
               />
               <button
+                type="button"
                 className="secondary-btn"
                 onClick={() => {
                   setDateFilter("");
@@ -576,6 +605,7 @@ export default function App() {
               <table>
                 <thead>
                   <tr>
+                    <th>Email</th>
                     <th>User ID</th>
                     <th>Date</th>
                     <th>Time In</th>
@@ -586,6 +616,7 @@ export default function App() {
                   {filteredAdminRecords.length > 0 ? (
                     filteredAdminRecords.map((item) => (
                       <tr key={item.id}>
+                        <td>{item.profiles?.email || "-"}</td>
                         <td>{item.user_id}</td>
                         <td>{item.date}</td>
                         <td>{formatDateTime(item.time_in)}</td>
@@ -594,7 +625,7 @@ export default function App() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="4">No matching records found.</td>
+                      <td colSpan="5">No matching records found.</td>
                     </tr>
                   )}
                 </tbody>
