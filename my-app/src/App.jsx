@@ -26,7 +26,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   const [email, setEmail] = useState("");
-  const [newEmail, setNewEmail] = useState(""); // For editing email
+  const [newEmail, setNewEmail] = useState(""); 
   const [isEditingEmail, setIsEditingEmail] = useState(false);
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -174,21 +174,28 @@ export default function App() {
     return "success";
   }
 
-  // --- EDIT EMAIL FUNCTION ---
+  // --- UPDATED EDIT EMAIL FUNCTION ---
   async function handleUpdateEmail() {
     setMessage("");
-    if (newEmail === session.user.email) {
+    
+    // Prevent updating to the exact same email
+    if (newEmail.trim() === session.user.email) {
+      setMessage("Error: That is already your current email.");
       setIsEditingEmail(false);
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ email: newEmail });
+    const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
 
     if (error) {
       setMessage("Update Error: " + error.message);
     } else {
-      setMessage("Confirmation email sent to " + newEmail + ". Please verify.");
+      // Since confirmation is disabled, this provides instant feedback
+      setMessage("✅ Email updated successfully!");
       setIsEditingEmail(false);
+      
+      // Auto-clear success message after 3 seconds
+      setTimeout(() => setMessage(""), 3000);
     }
   }
 
@@ -426,7 +433,6 @@ export default function App() {
               <span className="info-value">{session.user.id}</span>
             </div>
 
-            {/* EDITABLE EMAIL SECTION */}
             <div className="info-item">
               <span className="info-label">Email</span>
               {isEditingEmail ? (
@@ -456,7 +462,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* History Table */}
       <div className="card table-card">
         <h2 className="card-title">My Attendance</h2>
         <div className="table-wrap">
@@ -478,7 +483,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Admin Panel */}
       {profile?.role === "admin" && (
         <div className="card table-card">
           <h2 className="card-title">Admin Panel</h2>

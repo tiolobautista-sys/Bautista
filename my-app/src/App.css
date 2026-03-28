@@ -1,46 +1,89 @@
+/* Container for better spacing */
 .info-value-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: background 0.3s ease;
 }
 
+/* Subtle hover effect to make the row feel interactive */
+.info-value-row:hover {
+  background-color: #f8fafc;
+}
+
+/* Vibrant, modern text link */
 .btn-edit-text {
   background: transparent;
   border: none;
-  color: #2563eb;
+  color: #6366f1; /* Modern Indigo */
+  font-weight: 600;
   cursor: pointer;
   font-size: 0.85rem;
-  text-decoration: underline;
+  transition: all 0.2s ease;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.btn-edit-text:hover {
+  color: #4338ca;
+  background-color: #eef2ff;
+  text-decoration: none; /* Cleaner look than underline */
+}
+
+/* Input styling with a "glow" focus */
+.edit-input {
+  padding: 6px 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.edit-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+/* Buttons with depth and life */
+.btn-save {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
+  transition: transform 0.1s, box-shadow 0.2s;
+}
+
+.btn-save:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);
+}
+
+.btn-cancel {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cancel:hover {
+  background-color: #e2e8f0;
+  color: #334155;
 }
 
 .edit-email-group {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-}
-
-.edit-input {
-  padding: 4px 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-
-.btn-save {
-  background-color: #10b981;
-  color: white;
-  border: none;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.btn-cancel {
-  background-color: #6b7280;
-  color: white;
-  border: none;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
 }
