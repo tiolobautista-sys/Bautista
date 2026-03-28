@@ -26,8 +26,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   const [email, setEmail] = useState("");
-  const [newEmail, setNewEmail] = useState(""); 
-  const [isEditingEmail, setIsEditingEmail] = useState(false);
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
 
@@ -44,7 +42,6 @@ export default function App() {
     const getSession = async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session || null);
-      if (data.session) setNewEmail(data.session.user.email);
       setLoading(false);
     };
 
@@ -54,7 +51,6 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession || null);
-      if (newSession) setNewEmail(newSession.user.email);
     });
 
     return () => subscription.unsubscribe();
@@ -97,6 +93,7 @@ export default function App() {
       .from("attendance")
       .select("*")
       .eq("user_id", userId)
+      .order("date", { ascending: false })
       .order("time_in", { ascending: false });
 
     if (error) {
@@ -111,6 +108,7 @@ export default function App() {
     const { data: attendanceData, error: attendanceError } = await supabase
       .from("attendance")
       .select("id, user_id, date, time_in, time_out")
+      .order("date", { ascending: false })
       .order("time_in", { ascending: false });
 
     if (attendanceError) {
@@ -174,31 +172,6 @@ export default function App() {
     return "success";
   }
 
-  // --- UPDATED EDIT EMAIL FUNCTION ---
-  async function handleUpdateEmail() {
-    setMessage("");
-    
-    // Prevent updating to the exact same email
-    if (newEmail.trim() === session.user.email) {
-      setMessage("Error: That is already your current email.");
-      setIsEditingEmail(false);
-      return;
-    }
-
-    const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
-
-    if (error) {
-      setMessage("Update Error: " + error.message);
-    } else {
-      // Since confirmation is disabled, this provides instant feedback
-      setMessage("✅ Email updated successfully!");
-      setIsEditingEmail(false);
-      
-      // Auto-clear success message after 3 seconds
-      setTimeout(() => setMessage(""), 3000);
-    }
-  }
-
   async function register(e) {
     e.preventDefault();
     setMessage("");
@@ -249,31 +222,17 @@ export default function App() {
     setMessage("Logged out successfully.");
   }
 
-  async function handleDelete(id) {
-    if (!window.confirm("Are you sure you want to delete this record?")) return;
-
-    const { error } = await supabase.from("attendance").delete().eq("id", id);
-
-    if (error) {
-      setMessage("Error deleting: " + error.message);
-    } else {
-      setMessage("Record deleted successfully.");
-      await loadHistory(session.user.id);
-      if (profile?.role === "admin") {
-        await loadAdminRecords();
-      }
-    }
-  }
-
   async function timeIn() {
     if (!session?.user?.id) return;
-    setMessage("");
 
-    const { data: activeSession, error: fetchError } = await supabase
+    setMessage("");
+    const today = getToday();
+
+    const { data: existing, error: fetchError } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
-      .is("time_out", null)
+      .eq("date", today)
       .maybeSingle();
 
     if (fetchError) {
@@ -281,15 +240,15 @@ export default function App() {
       return;
     }
 
-    if (activeSession) {
-      setMessage("You must Time Out from your current session first.");
+    if (existing?.time_in) {
+      setMessage("Already timed in today.");
       return;
     }
 
     const { error } = await supabase.from("attendance").insert([
       {
         user_id: session.user.id,
-        date: getToday(),
+        date: today,
         time_in: new Date().toISOString(),
         time_out: null,
       },
@@ -310,15 +269,15 @@ export default function App() {
 
   async function timeOut() {
     if (!session?.user?.id) return;
-    setMessage("");
 
-    const { data: activeSession, error: fetchError } = await supabase
+    setMessage("");
+    const today = getToday();
+
+    const { data: existing, error: fetchError } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
-      .is("time_out", null)
-      .order("time_in", { ascending: false })
-      .limit(1)
+      .eq("date", today)
       .maybeSingle();
 
     if (fetchError) {
@@ -326,15 +285,20 @@ export default function App() {
       return;
     }
 
-    if (!activeSession) {
-      setMessage("No active session found. Please Time In first.");
+    if (!existing?.time_in) {
+      setMessage("Time in first.");
+      return;
+    }
+
+    if (existing?.time_out) {
+      setMessage("Already timed out.");
       return;
     }
 
     const { error } = await supabase
       .from("attendance")
       .update({ time_out: new Date().toISOString() })
-      .eq("id", activeSession.id);
+      .eq("id", existing.id);
 
     if (error) {
       setMessage(error.message);
@@ -354,6 +318,7 @@ export default function App() {
       <div className="loading-shell">
         <div className="loading-box">
           <h2>Loading system...</h2>
+          <p>Please wait while we prepare your dashboard.</p>
         </div>
       </div>
     );
@@ -366,37 +331,109 @@ export default function App() {
           <div className="auth-left">
             <div className="brand-badge">Attendance Monitoring System</div>
             <h1 className="auth-title">Attendance System</h1>
-            <p className="auth-subtitle">A modern tracking platform.</p>
+            <p className="auth-subtitle">
+              A modern attendance tracking platform with secure login, accurate
+              time-in and time-out recording, attendance history, and admin
+              monitoring.
+            </p>
+
+            <div className="feature-list">
+              <div className="feature-item">
+                <strong>Accurate Logging</strong>
+                <span>
+                  Users can record daily attendance with duplicate prevention.
+                </span>
+              </div>
+
+              <div className="feature-item">
+                <strong>Attendance History</strong>
+                <span>
+                  Every user can review their own logs in a clean table view.
+                </span>
+              </div>
+
+              <div className="feature-item">
+                <strong>Admin Monitoring</strong>
+                <span>
+                  Administrators can view all users and filter records quickly.
+                </span>
+              </div>
+            </div>
           </div>
 
           <div className="auth-right">
             <h2 className="form-title">
               {authMode === "login" ? "Welcome Back" : "Create Account"}
             </h2>
+            <p className="form-subtitle">
+              {authMode === "login"
+                ? "Sign in to access your attendance dashboard."
+                : "Register a new account to use the system."}
+            </p>
 
             <div className="auth-tabs">
-              <button type="button" className={authMode === "login" ? "btn-primary" : "btn-outline"} onClick={() => setAuthMode("login")}>Login</button>
-              <button type="button" className={authMode === "register" ? "btn-primary" : "btn-outline"} onClick={() => setAuthMode("register")}>Register</button>
+              <button
+                type="button"
+                className={authMode === "login" ? "btn-primary" : "btn-outline"}
+                onClick={() => setAuthMode("login")}
+              >
+                Login
+              </button>
+              <button
+                type="button"
+                className={authMode === "register" ? "btn-primary" : "btn-outline"}
+                onClick={() => setAuthMode("register")}
+              >
+                Register
+              </button>
             </div>
 
             <form onSubmit={authMode === "login" ? login : register}>
               {authMode === "register" && (
                 <div className="form-group">
                   <label>Full Name</label>
-                  <input type="text" placeholder="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+                  <input
+                    type="text"
+                    placeholder="Enter your full name"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    required
+                  />
                 </div>
               )}
+
               <div className="form-group">
                 <label>Email</label>
-                <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <input
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
               </div>
+
               <div className="form-group">
                 <label>Password</label>
-                <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <input
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
               </div>
-              <button type="submit" className="btn-primary full-btn">{authMode === "login" ? "Login" : "Register"}</button>
+
+              <button type="submit" className="btn-primary full-btn">
+                {authMode === "login" ? "Login" : "Register"}
+              </button>
             </form>
-            {message && <div className={`message ${getMessageType()}`}>{message}</div>}
+
+            {message && (
+              <div className={`message ${getMessageType()}`}>
+                {message}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -408,20 +445,37 @@ export default function App() {
       <div className="topbar">
         <div className="topbar-left">
           <h1>Attendance Dashboard</h1>
-          <p>Welcome back, <strong>{profile?.full_name || session.user.email}</strong></p>
+          <p>
+            Welcome back, <strong>{profile?.full_name || session.user.email}</strong>
+          </p>
           <div className="role-badge">Role: {profile?.role || "user"}</div>
         </div>
-        <button className="btn-danger" onClick={logout}>Logout</button>
+
+        <button className="btn-danger" onClick={logout}>
+          Logout
+        </button>
       </div>
 
-      {message && <div className={`message ${getMessageType()}`}>{message}</div>}
+      {message && (
+        <div className={`message ${getMessageType()}`}>
+          {message}
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card">
           <h2 className="card-title">Attendance Actions</h2>
+          <p className="card-subtitle">
+            Record your daily attendance using the buttons below.
+          </p>
+
           <div className="button-row">
-            <button className="btn-primary" onClick={timeIn}>Time In</button>
-            <button className="btn-secondary" onClick={timeOut}>Time Out</button>
+            <button className="btn-primary" onClick={timeIn}>
+              Time In
+            </button>
+            <button className="btn-secondary" onClick={timeOut}>
+              Time Out
+            </button>
           </div>
         </div>
 
@@ -435,23 +489,7 @@ export default function App() {
 
             <div className="info-item">
               <span className="info-label">Email</span>
-              {isEditingEmail ? (
-                <div className="edit-email-group">
-                  <input 
-                    type="email" 
-                    className="edit-input"
-                    value={newEmail} 
-                    onChange={(e) => setNewEmail(e.target.value)} 
-                  />
-                  <button className="btn-save small" onClick={handleUpdateEmail}>Save</button>
-                  <button className="btn-cancel small" onClick={() => setIsEditingEmail(false)}>Cancel</button>
-                </div>
-              ) : (
-                <div className="info-value-row">
-                  <span className="info-value">{session.user.email}</span>
-                  <button className="btn-edit-text" onClick={() => setIsEditingEmail(true)}>Edit</button>
-                </div>
-              )}
+              <span className="info-value">{session.user.email}</span>
             </div>
 
             <div className="info-item">
@@ -464,20 +502,33 @@ export default function App() {
 
       <div className="card table-card">
         <h2 className="card-title">My Attendance</h2>
+        <p className="card-subtitle">View your recorded attendance history.</p>
+
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Action</th></tr>
+              <tr>
+                <th>Date</th>
+                <th>Time In</th>
+                <th>Time Out</th>
+              </tr>
             </thead>
             <tbody>
-              {history.map((h) => (
-                <tr key={h.id}>
-                  <td>{formatDate(h.date)}</td>
-                  <td>{formatDateTime(h.time_in)}</td>
-                  <td>{formatDateTime(h.time_out)}</td>
-                  <td><button className="btn-danger small" onClick={() => handleDelete(h.id)}>Delete</button></td>
+              {history.length > 0 ? (
+                history.map((h) => (
+                  <tr key={h.id}>
+                    <td>{formatDate(h.date)}</td>
+                    <td>{formatDateTime(h.time_in)}</td>
+                    <td>{formatDateTime(h.time_out)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="3" className="empty-state">
+                    No attendance records yet.
+                  </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -486,27 +537,64 @@ export default function App() {
       {profile?.role === "admin" && (
         <div className="card table-card">
           <h2 className="card-title">Admin Panel</h2>
+          <p className="card-subtitle">
+            Monitor all user attendance records and apply filters.
+          </p>
+
           <div className="filter-row">
-            <input type="text" placeholder="Search user id or email" value={userFilter} onChange={(e) => setUserFilter(e.target.value)} />
-            <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
-            <button className="btn-outline" onClick={() => { setUserFilter(""); setDateFilter(""); }}>Clear</button>
+            <input
+              type="text"
+              placeholder="Search user id or email"
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            />
+
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+            />
+
+            <button
+              className="btn-outline"
+              onClick={() => {
+                setUserFilter("");
+                setDateFilter("");
+              }}
+            >
+              Clear Filters
+            </button>
           </div>
+
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>User ID</th><th>Email</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Action</th></tr>
+                <tr>
+                  <th>User ID</th>
+                  <th>Email</th>
+                  <th>Date</th>
+                  <th>Time In</th>
+                  <th>Time Out</th>
+                </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((r) => (
-                  <tr key={r.id}>
-                    <td className="user-id-cell">{r.user_id}</td>
-                    <td>{r.email}</td>
-                    <td>{formatDate(r.date)}</td>
-                    <td>{formatDateTime(r.time_in)}</td>
-                    <td>{formatDateTime(r.time_out)}</td>
-                    <td><button className="btn-danger small" onClick={() => handleDelete(r.id)}>Delete</button></td>
+                {filteredRecords.length > 0 ? (
+                  filteredRecords.map((r) => (
+                    <tr key={r.id}>
+                      <td className="user-id-cell">{r.user_id}</td>
+                      <td>{r.email}</td>
+                      <td>{formatDate(r.date)}</td>
+                      <td>{formatDateTime(r.time_in)}</td>
+                      <td>{formatDateTime(r.time_out)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5" className="empty-state">
+                      No matching records found.
+                    </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
