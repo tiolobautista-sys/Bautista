@@ -172,7 +172,6 @@ export default function App() {
     return "success";
   }
 
-  // --- NEW DELETE FUNCTION ---
   async function handleDelete(id) {
     if (!window.confirm("Are you sure you want to delete this record?")) return;
 
@@ -185,7 +184,6 @@ export default function App() {
       setMessage("Error deleting: " + error.message);
     } else {
       setMessage("Record deleted successfully.");
-      // Refresh both lists
       if (session?.user) await loadHistory(session.user.id);
       if (profile?.role === "admin") await loadAdminRecords();
     }
@@ -241,26 +239,23 @@ export default function App() {
     setMessage("Logged out successfully.");
   }
 
+  // --- UPDATED FOR MULTIPLE TIME INs ---
   async function timeIn() {
     if (!session?.user?.id) return;
 
     setMessage("");
     const today = getToday();
 
-    const { data: existing, error: fetchError } = await supabase
+    // Check if there is an active session (timed in but not out)
+    const { data: activeSession } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
-      .eq("date", today)
+      .is("time_out", null)
       .maybeSingle();
 
-    if (fetchError) {
-      setMessage(fetchError.message);
-      return;
-    }
-
-    if (existing?.time_in) {
-      setMessage("Already timed in today.");
+    if (activeSession) {
+      setMessage("You are already timed in. Please Time Out first.");
       return;
     }
 
@@ -280,23 +275,23 @@ export default function App() {
 
     setMessage("Time In recorded successfully.");
     await loadHistory(session.user.id);
-
-    if (profile?.role === "admin") {
-      await loadAdminRecords();
-    }
+    if (profile?.role === "admin") await loadAdminRecords();
   }
 
+  // --- UPDATED FOR MULTIPLE TIME OUTs ---
   async function timeOut() {
     if (!session?.user?.id) return;
 
     setMessage("");
-    const today = getToday();
 
-    const { data: existing, error: fetchError } = await supabase
+    // Find the latest record that doesn't have a Time Out yet
+    const { data: latestEntry, error: fetchError } = await supabase
       .from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
-      .eq("date", today)
+      .is("time_out", null)
+      .order("time_in", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (fetchError) {
@@ -304,20 +299,15 @@ export default function App() {
       return;
     }
 
-    if (!existing?.time_in) {
-      setMessage("Time in first.");
-      return;
-    }
-
-    if (existing?.time_out) {
-      setMessage("Already timed out.");
+    if (!latestEntry) {
+      setMessage("No active session found. Please Time In first.");
       return;
     }
 
     const { error } = await supabase
       .from("attendance")
       .update({ time_out: new Date().toISOString() })
-      .eq("id", existing.id);
+      .eq("id", latestEntry.id);
 
     if (error) {
       setMessage(error.message);
@@ -326,10 +316,7 @@ export default function App() {
 
     setMessage("Time Out recorded successfully.");
     await loadHistory(session.user.id);
-
-    if (profile?.role === "admin") {
-      await loadAdminRecords();
-    }
+    if (profile?.role === "admin") await loadAdminRecords();
   }
 
   if (loading) {
@@ -352,44 +339,14 @@ export default function App() {
             <h1 className="auth-title">Attendance System</h1>
             <p className="auth-subtitle">
               A modern attendance tracking platform with secure login, accurate
-              time-in and time-out recording, attendance history, and admin
-              monitoring.
+              time-in and time-out recording, history tracking, and admin controls.
             </p>
-
-            <div className="feature-list">
-              <div className="feature-item">
-                <strong>Accurate Logging</strong>
-                <span>
-                  Users can record daily attendance with duplicate prevention.
-                </span>
-              </div>
-
-              <div className="feature-item">
-                <strong>Attendance History</strong>
-                <span>
-                  Every user can review their own logs in a clean table view.
-                </span>
-              </div>
-
-              <div className="feature-item">
-                <strong>Admin Monitoring</strong>
-                <span>
-                  Administrators can view all users and filter records quickly.
-                </span>
-              </div>
-            </div>
           </div>
 
           <div className="auth-right">
             <h2 className="form-title">
               {authMode === "login" ? "Welcome Back" : "Create Account"}
             </h2>
-            <p className="form-subtitle">
-              {authMode === "login"
-                ? "Sign in to access your attendance dashboard."
-                : "Register a new account to use the system."}
-            </p>
-
             <div className="auth-tabs">
               <button
                 type="button"
@@ -420,7 +377,6 @@ export default function App() {
                   />
                 </div>
               )}
-
               <div className="form-group">
                 <label>Email</label>
                 <input
@@ -431,7 +387,6 @@ export default function App() {
                   required
                 />
               </div>
-
               <div className="form-group">
                 <label>Password</label>
                 <input
@@ -442,7 +397,6 @@ export default function App() {
                   required
                 />
               </div>
-
               <button type="submit" className="btn-primary full-btn">
                 {authMode === "login" ? "Login" : "Register"}
               </button>
@@ -484,10 +438,7 @@ export default function App() {
       <div className="grid-2">
         <div className="card">
           <h2 className="card-title">Attendance Actions</h2>
-          <p className="card-subtitle">
-            Record your daily attendance using the buttons below.
-          </p>
-
+          <p className="card-subtitle">Record your attendance sessions below.</p>
           <div className="button-row">
             <button className="btn-primary" onClick={timeIn}>
               Time In
@@ -505,12 +456,10 @@ export default function App() {
               <span className="info-label">User ID</span>
               <span className="info-value">{session.user.id}</span>
             </div>
-
             <div className="info-item">
               <span className="info-label">Email</span>
               <span className="info-value">{session.user.email}</span>
             </div>
-
             <div className="info-item">
               <span className="info-label">Role</span>
               <span className="info-value">{profile?.role || "user"}</span>
@@ -520,9 +469,7 @@ export default function App() {
       </div>
 
       <div className="card table-card">
-        <h2 className="card-title">My Attendance</h2>
-        <p className="card-subtitle">View your recorded attendance history.</p>
-
+        <h2 className="card-title">My Attendance History</h2>
         <div className="table-wrap">
           <table>
             <thead>
@@ -553,9 +500,7 @@ export default function App() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="4" className="empty-state">
-                    No attendance records yet.
-                  </td>
+                  <td colSpan="4" className="empty-state">No records yet.</td>
                 </tr>
               )}
             </tbody>
@@ -566,35 +511,22 @@ export default function App() {
       {profile?.role === "admin" && (
         <div className="card table-card">
           <h2 className="card-title">Admin Panel</h2>
-          <p className="card-subtitle">
-            Monitor all user attendance records and apply filters.
-          </p>
-
           <div className="filter-row">
             <input
               type="text"
-              placeholder="Search user id or email"
+              placeholder="Search user or email"
               value={userFilter}
               onChange={(e) => setUserFilter(e.target.value)}
             />
-
             <input
               type="date"
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
             />
-
-            <button
-              className="btn-outline"
-              onClick={() => {
-                setUserFilter("");
-                setDateFilter("");
-              }}
-            >
-              Clear Filters
+            <button className="btn-outline" onClick={() => { setUserFilter(""); setDateFilter(""); }}>
+              Clear
             </button>
           </div>
-
           <div className="table-wrap">
             <table>
               <thead>
@@ -617,22 +549,12 @@ export default function App() {
                       <td>{formatDateTime(r.time_in)}</td>
                       <td>{formatDateTime(r.time_out)}</td>
                       <td>
-                        <button 
-                          className="btn-danger" 
-                          style={{ padding: '5px 10px', fontSize: '12px' }}
-                          onClick={() => handleDelete(r.id)}
-                        >
-                          Delete
-                        </button>
+                        <button className="btn-danger" onClick={() => handleDelete(r.id)}>Delete</button>
                       </td>
                     </tr>
                   ))
                 ) : (
-                  <tr>
-                    <td colSpan="6" className="empty-state">
-                      No matching records found.
-                    </td>
-                  </tr>
+                  <tr><td colSpan="6" className="empty-state">No matching records.</td></tr>
                 )}
               </tbody>
             </table>
