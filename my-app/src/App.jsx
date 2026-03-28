@@ -27,8 +27,6 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [authMode, setAuthMode] = useState("login");
-  const [userFilter, setUserFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -67,10 +65,10 @@ export default function App() {
     setAdminRecords(att?.map(r => ({ ...r, email: map[r.user_id] || "Unknown" })) || []);
   }
 
-  // --- LOGIC FOR MULTIPLE SESSIONS ---
+  // --- MULTIPLE SESSION LOGIC ---
   async function handleTimeIn() {
     setMessage("");
-    // 1. Check if there is currently an OPEN session (time_out is null)
+    // Check for an OPEN session (time_out is null)
     const { data: active } = await supabase.from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
@@ -78,11 +76,11 @@ export default function App() {
       .maybeSingle();
 
     if (active) {
-      setMessage("Error: You already have an active session. Time out first.");
+      setMessage("Error: You have an active session. Please Time Out first.");
       return;
     }
 
-    // 2. If no open session, insert a NEW row for this new session
+    // Insert a new row (Date is saved, but not used as a unique key)
     const { error } = await supabase.from("attendance").insert([{
       user_id: session.user.id,
       date: new Date().toISOString().split('T')[0],
@@ -94,13 +92,12 @@ export default function App() {
     } else {
       setMessage("New session started!");
       loadHistory(session.user.id);
-      if (profile?.role === "admin") loadAdminRecords();
     }
   }
 
   async function handleTimeOut() {
     setMessage("");
-    // 1. Find the latest session that hasn't been closed
+    // Find the current active session
     const { data: active } = await supabase.from("attendance")
       .select("*")
       .eq("user_id", session.user.id)
@@ -114,7 +111,7 @@ export default function App() {
       return;
     }
 
-    // 2. Update only that specific row
+    // Update the specific session ID
     const { error } = await supabase.from("attendance")
       .update({ time_out: new Date().toISOString() })
       .eq("id", active.id);
@@ -123,7 +120,6 @@ export default function App() {
     else {
       setMessage("Session ended successfully.");
       loadHistory(session.user.id);
-      if (profile?.role === "admin") loadAdminRecords();
     }
   }
 
@@ -133,7 +129,6 @@ export default function App() {
       ? await supabase.auth.signInWithPassword({ email, password })
       : await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } });
     if (error) setMessage(error.message);
-    else if (authMode === "register") { setMessage("Success! Now log in."); setAuthMode("login"); }
   }
 
   if (loading) return <div className="loading-shell"><h2>Loading...</h2></div>;
@@ -170,7 +165,6 @@ export default function App() {
       <div className="grid-2">
         <div className="card">
           <h2>Attendance Actions</h2>
-          <p>Click Time In to start a session and Time Out to end it.</p>
           <div className="button-row">
             <button className="btn-primary" onClick={handleTimeIn}>Time In</button>
             <button className="btn-secondary" onClick={handleTimeOut}>Time Out</button>
@@ -203,26 +197,6 @@ export default function App() {
           </table>
         </div>
       </div>
-      
-      {profile?.role === "admin" && (
-         <div className="card table-card">
-            <h2>Admin Monitoring</h2>
-            <div className="table-wrap">
-                <table>
-                    <thead><tr><th>Email</th><th>Time In</th><th>Time Out</th><th>Duration</th></tr></thead>
-                    <tbody>
-                        {adminRecords.map(r => (
-                            <tr key={r.id}>
-                                <td>{r.email}</td><td>{formatDateTime(r.time_in)}</td>
-                                <td>{r.time_out ? formatDateTime(r.time_out) : "Active"}</td>
-                                <td>{calculateDuration(r.time_in, r.time_out)}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-         </div>
-      )}
     </div>
   );
 }
