@@ -1,94 +1,46 @@
-/* Container with a very soft red tint on hover */
 .info-value-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  padding: 10px 14px;
-  border-radius: 10px;
-  transition: all 0.2s ease;
-  border-left: 3px solid transparent;
 }
 
-.info-value-row:hover {
-  background-color: #fef2f2; /* Ultra-light red */
-  border-left: 3px solid #ef4444; /* Red accent stripe */
-}
-
-/* Red Interactive Text */
 .btn-edit-text {
   background: transparent;
   border: none;
-  color: #dc2626; /* Deep Red */
-  font-weight: 600;
+  color: #2563eb;
   cursor: pointer;
   font-size: 0.85rem;
-  padding: 4px 10px;
-  border-radius: 20px;
-  transition: background 0.2s;
-}
-
-.btn-edit-text:hover {
-  background-color: #fee2e2;
-  text-decoration: none;
-}
-
-/* Input with Red Focus Ring */
-.edit-input {
-  padding: 8px 12px;
-  border: 1px solid #fca5a5; /* Soft red border */
-  border-radius: 8px;
-  font-size: 0.9rem;
-  outline: none;
-  transition: all 0.2s;
-}
-
-.edit-input:focus {
-  border-color: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
-}
-
-/* Vibrant Emerald Save Button */
-.btn-save {
-  background: #10b981; /* Alive Green */
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 0px #059669; /* 3D effect shadow */
-  transition: all 0.1s;
-}
-
-.btn-save:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0px #059669;
-}
-
-.btn-save:hover {
-  background-color: #059669;
-}
-
-/* Muted Neutral-Red Cancel Button */
-.btn-cancel {
-  background-color: white;
-  color: #991b1b; /* Darker red text */
-  border: 1px solid #fecaca;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-cancel:hover {
-  background-color: #fef2f2;
-  border-color: #ef4444;
+  text-decoration: underline;
 }
 
 .edit-email-group {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.edit-input {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.btn-save {
+  background-color: #10b981;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-cancel {
+  background-color: #6b7280;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
 }
