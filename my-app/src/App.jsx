@@ -169,6 +169,7 @@ export default function App() {
     return "success";
   }
 
+  // --- UPDATED INSTANT EMAIL UPDATE ---
   async function handleUpdateEmail() {
     setMessage("");
     if (newEmail.trim() === session.user.email) {
@@ -177,18 +178,26 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+    const { data, error } = await supabase.auth.updateUser({ 
+      email: newEmail.trim() 
+    });
 
     if (error) {
       setMessage("Update Error: " + error.message);
     } else {
-      setMessage("✅ Email updated successfully!");
+      setMessage("✅ Email updated instantly!");
       setIsEditingEmail(false);
+      
+      // Manually refresh local session so the UI updates without a reload
+      setSession(prev => ({
+        ...prev,
+        user: data.user
+      }));
+
       setTimeout(() => setMessage(""), 3000);
     }
   }
 
-  // --- DELETE FUNCTION ---
   async function handleDelete(id) {
     if (!window.confirm("Are you sure you want to delete this record?")) return;
 
@@ -407,7 +416,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* MY ATTENDANCE TABLE WITH DELETE BUTTON */}
       <div className="card table-card">
         <h2 className="card-title">My Attendance</h2>
         <div className="table-wrap">
@@ -431,7 +439,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* ADMIN PANEL WITH DELETE BUTTON */}
       {profile?.role === "admin" && (
         <div className="card table-card">
           <h2 className="card-title">Admin Panel</h2>
